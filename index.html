@@ -232,6 +232,21 @@ function removeModelFromCart(modelId) {
     updateCartPanel();
 }
 
+// פונקציה חדשה לריקון ואיפוס מוחלט של כל הפריטים בסל למניעת כפילויות ושליחה חוזרת
+function clearCart() {
+    products.forEach(p => {
+        Object.keys(p.stock).forEach(size => {
+            const input = document.getElementById(`size_${p.model}_${size}`);
+            if (input) {
+                input.value = 0;
+                input.classList.remove('has-value');
+            }
+        });
+    });
+    updateCartCount();
+    updateCartPanel();
+}
+
 function validateInput(input, max) {
     let val = parseInt(input.value) || 0;
     if (val < 0) val = 0;
@@ -336,7 +351,8 @@ function submitOrder() {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            closeCart();
+            closeCart();        // סוגר את פאנל הסל
+            clearCart();        // מאפס לחלוטין את כל הכמויות של המוצרים
             document.getElementById('mainForm').style.display = 'none';
             document.getElementById('successDiv').style.display = 'block';
         } else {
