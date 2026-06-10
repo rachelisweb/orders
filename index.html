@@ -164,41 +164,47 @@
 </div>
 
 <script>
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx1Vh3AKuqWZb5K6jnXXAOAo0g09Kkf02ypwgLD135kWwUnz7ZDBZ-1dAUGk-pM0pii/exec';
+// קישור ה-Apps Script הקיים
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzxuK0u9kpeFF__UMety8BsyiEle7_4AeTzVhRejj_nXVYfmCF-MvrdBhdIVpB1kyw/exec';
 
-// מיפוי מתוקן: הקיץ פונה לגיליון "מלאי מחסן" האמיתי באקסל שלכם
+// הגדרת המיפוי בין הלשוניות לשמות הגליונות באקסל
 const TABS = {
-    summer: 'מלאי מחסן',
+    summer: 'קולקציית קיץ',
     winter: 'קולקציית חורף 26'
 };
 
-const sizeOrder = ["XS","S","M","L","XL","XXL","3XL","4XL","5XL"];
+const sizeOrder = ["S","M","L","XL","XXL","3XL","4XL","5XL"];
 
-let currentTab = 'summer';       
-let tabCache = {};              
-let allProducts = {};            
-let currentTabProducts = [];     
-let cartState = {};              // { [model]: { sizes: { [size]: qty }, sheetName: "..." } }
+// ניהול מצב האפליקציה (State)
+let currentTab = 'summer';       // לשונית פעילה כרגע (נפתח על קיץ כברירת מחדל)
+let tabCache = {};               // זיכרון מטמון כדי למנוע טעינות כפולות מיותרות
+let allProducts = {};            // רישום גלובלי של כל הדגמים שנטענו (לצורך הצגת הסל)
+let currentTabProducts = [];     // המוצרים שמוצגים בלשונית הנוכחית
+let cartState = {};              // שמירת המלאי שנבחר: { [model]: { [size]: qty } }
 
 window.onload = function() {
+    // מציג את הטופס הראשי וטוען את הלשונית הראשונה (קיץ)
     document.getElementById('loadingDiv').style.display = 'none';
     document.getElementById('mainForm').style.display = 'block';
     loadTabProducts('summer');
 };
 
+// פונקציית טעינת מוצרים ללשונית ספציפית
 function loadTabProducts(tabKey) {
     const container = document.getElementById('productsContainer');
     
+    // אם המוצרים כבר קיימים במטמון - נרנדר אותם מיד
     if (tabCache[tabKey]) {
         currentTabProducts = tabCache[tabKey];
         renderProducts();
         return;
     }
     
+    // מציג ספינר טעינה ייעודי בתוך מכלול המוצרים
     container.innerHTML = `
         <div style="text-align: center; padding: 3rem;">
             <div class="spinner"></div>
-            <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 10px;">טוען מוצרים מ${tabKey === 'summer' ? 'קולקציית קיץ' : 'קולקציית חורף 26'}...</p>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 10px;">טוען מוצרים מ${TABS[tabKey]}...</p>
         </div>
     `;
     
@@ -208,8 +214,9 @@ function loadTabProducts(tabKey) {
         .then(data => {
             tabCache[tabKey] = data;
             
+            // עדכון הרישום הגלובלי של המוצרים לשימוש עתידי בסל
             data.forEach(p => {
-                allProducts[p.model] = p; 
+                allProducts[p.model] = p;
             });
             
             if (currentTab === tabKey) {
@@ -227,17 +234,23 @@ function loadTabProducts(tabKey) {
         });
 }
 
+// מעבר בין לשוניות
 function switchTab(tabKey) {
     if (currentTab === tabKey) return;
     
+    // עדכון העיצוב הויזואלי של הלשוניות
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     document.getElementById(`tab-${tabKey}`).classList.add('active');
     
     currentTab = tabKey;
+    
+    // איפוס תיבת החיפוש
     document.getElementById('searchInput').value = '';
+    
     loadTabProducts(tabKey);
 }
 
+// רינדור רשימת המוצרים הפעילה
 function renderProducts() {
     const container = document.getElementById('productsContainer');
     if (!currentTabProducts.length) { 
@@ -259,7 +272,7 @@ function renderProducts() {
                 </div>
                 <div class="sizes-grid">
                     ${sortedSizes.map(size => {
-                        const currentVal = (cartState[p.model] && cartState[p.model].sizes[size]) ? cartState[p.model].sizes[size] : 0;
+                        const currentVal = (cartState[p.model] && cartState[p.model][size]) ? cartState[p.model][size] : 0;
                         const hasValClass = currentVal > 0 ? 'has-value' : '';
                         return `
                         <div class="size-item">
@@ -276,6 +289,7 @@ function renderProducts() {
     }).join('');
 }
 
+// עדכון ולידציה ושמירת מצב הסל
 function validateAndSetInput(input, max, modelId, size) {
     let val = parseInt(input.value) || 0;
     if (val < 0) val = 0;
@@ -284,19 +298,13 @@ function validateAndSetInput(input, max, modelId, size) {
     input.value = val;
     input.classList.toggle('has-value', val > 0);
     
-    if (!cartState[modelId]) {
-        const p = allProducts[modelId];
-        cartState[modelId] = {
-            sizes: {},
-            sheetName: p && p.sheetName ? p.sheetName : (currentTab === 'summer' ? 'מלאי מחסן' : 'קולקציית חורף 26')
-        };
-    }
+    if (!cartState[modelId]) cartState[modelId] = {};
+    cartState[modelId][size] = val;
     
-    cartState[modelId].sizes[size] = val;
-    
+    // ניקוי ערכים ריקים מהאובייקט
     if (val === 0) {
-        delete cartState[modelId].sizes[size];
-        if (Object.keys(cartState[modelId].sizes).length === 0) {
+        delete cartState[modelId][size];
+        if (Object.keys(cartState[modelId]).length === 0) {
             delete cartState[modelId];
         }
     }
@@ -315,35 +323,33 @@ function closeModal() {
     document.getElementById('modalImg').src = '';
 }
 
+// הוספת סריה
 function addSerie(modelId) {
     const product = allProducts[modelId];
     if (!product) return;
     
-    if (!cartState[modelId]) {
-        cartState[modelId] = {
-            sizes: {},
-            sheetName: product.sheetName || (currentTab === 'summer' ? 'מלאי מחסן' : 'קולקציית חורף 26')
-        };
-    }
+    if (!cartState[modelId]) cartState[modelId] = {};
     
     Object.keys(product.stock).forEach(size => {
-        let currentVal = cartState[modelId].sizes[size] || 0;
+        let currentVal = cartState[modelId][size] || 0;
         if (currentVal < product.stock[size]) {
-            cartState[modelId].sizes[size] = currentVal + 1;
+            cartState[modelId][size] = currentVal + 1;
         }
     });
     
-    renderProducts(); 
+    renderProducts(); // עדכון ה-inputs המוצגים על המסך
     updateCartCount();
 }
 
+// הסרת דגם שלם מהסל
 function removeModelFromCart(modelId) {
     delete cartState[modelId];
-    renderProducts(); 
+    renderProducts(); // עדכון שדה הערכים במידה והדגם מוצג כרגע בלשונית הפעילה
     updateCartCount();
     updateCartPanel();
 }
 
+// איפוס מוחלט של הסל
 function clearCart() {
     cartState = {};
     renderProducts();
@@ -351,10 +357,11 @@ function clearCart() {
     updateCartPanel();
 }
 
+// עדכון מונה הסל הראשי בראש הדף
 function updateCartCount() {
     let total = 0;
-    Object.values(cartState).forEach(item => {
-        Object.values(item.sizes).forEach(qty => {
+    Object.values(cartState).forEach(sizes => {
+        Object.values(sizes).forEach(qty => {
             total += qty;
         });
     });
@@ -367,6 +374,7 @@ function updateCartCount() {
 function openCart() { updateCartPanel(); document.getElementById('cartOverlay').classList.add('active'); }
 function closeCart() { document.getElementById('cartOverlay').classList.remove('active'); }
 
+// בניית פאנל הסל עם חלוקה נוחה
 function updateCartPanel() {
     const container = document.getElementById('cartItems');
     const footer = document.getElementById('cartFooter');
@@ -378,10 +386,10 @@ function updateCartPanel() {
         if (!p) return;
         
         let pQty = 0, sizesHtml = '';
-        const sortedSizes = sizeOrder.filter(s => cartState[modelId].sizes[s] !== undefined);
+        const sortedSizes = sizeOrder.filter(s => cartState[modelId][s] !== undefined);
         
         sortedSizes.forEach(s => {
-            const val = cartState[modelId].sizes[s] || 0;
+            const val = cartState[modelId][s] || 0;
             if (val > 0) {
                 pQty += val;
                 sizesHtml += `<span class="cart-size-tag">${s}: ${val}</span>`;
@@ -397,7 +405,6 @@ function updateCartPanel() {
                 </div>
                 <div class="cart-item-info">
                     <div class="cart-item-title">דגם ${p.model}</div>
-                    <div style="color:var(--text-muted); font-size:0.75rem; margin-bottom:4px;">מקור: ${cartState[modelId].sheetName === 'מלאי מחסן' ? 'קולקציית קיץ' : cartState[modelId].sheetName}</div>
                     <div style="display:flex; flex-wrap:wrap; gap:2px;">${sizesHtml}</div>
                 </div>
                 <button class="btn-remove" onclick="removeModelFromCart('${p.model}')" title="הסר פריט">🗑️</button>
@@ -439,8 +446,7 @@ function submitOrder() {
     Object.keys(cartState).forEach(modelId => {
         orderItems.push({
             model: modelId,
-            sizes: { ...cartState[modelId].sizes },
-            sheetName: cartState[modelId].sheetName
+            sizes: { ...cartState[modelId] }
         });
     });
 
@@ -467,8 +473,8 @@ function submitOrder() {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            closeCart();        
-            clearCart();        
+            closeCart();        // סוגר את פאנל הסל
+            clearCart();        // מאפס לחלוטין את כל הכמויות של המוצרים בזיכרון
             document.getElementById('mainForm').style.display = 'none';
             document.getElementById('successDiv').style.display = 'block';
         } else {
