@@ -31,6 +31,13 @@
         .form-group input, .search-box { width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 10px; background: #fcfcfc; font-size: 14px; }
         .form-group input:focus, .search-box:focus { outline: none; border-color: var(--accent); }
         .search-box { margin-bottom: 1.5rem; }
+        
+        /* עיצוב הלשוניות העליונות */
+        .tabs-container { display: flex; gap: 8px; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
+        .tab-btn { flex: 1; padding: 12px 16px; background: none; border: none; border-radius: 8px; font-size: 0.95rem; font-weight: 700; color: var(--text-muted); cursor: pointer; transition: all 0.2s ease; text-align: center; display: flex; align-items: center; justify-content: center; gap: 6px; }
+        .tab-btn.active { background: var(--accent); color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25); }
+        .tab-btn:hover:not(.active) { background: #f1f5f9; color: var(--text-main); }
+
         .product-card { border: 1px solid var(--border); border-radius: 14px; margin-bottom: 1rem; background: white; display: flex; overflow: hidden; }
         .product-image { width: 110px; min-width: 110px; background: #f1f5f9; cursor: pointer; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; }
         .product-image img { width: 100%; height: 100%; object-fit: cover; }
@@ -43,17 +50,18 @@
         .size-label { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); }
         .size-input { width: 48px; height: 36px; text-align: center; border: 2px solid var(--border); border-radius: 8px; font-weight: 700; font-size: 14px; }
         .size-input.has-value { border-color: var(--success); background: #ecfdf5; color: var(--success); }
+        
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.75); z-index: 999; align-items: center; justify-content: center; }
         .modal-overlay.active { display: flex; }
         .modal-box { background: white; border-radius: 14px; padding: 14px; max-width: 420px; width: 90%; position: relative; }
         .modal-box img { width: 100%; border-radius: 10px; object-fit: contain; max-height: 500px; }
         .modal-close { position: absolute; top: 10px; left: 10px; width: 30px; height: 30px; background: #eee; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; border: none; }
+        
         .cart-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15,23,42,0.8); backdrop-filter: blur(4px); z-index: 998; }
         .cart-overlay.active { display: flex; }
         .cart-panel { background: white; width: 400px; max-width: 100vw; height: 100vh; position: absolute; left: 0; padding: 1.5rem; display: flex; flex-direction: column; box-shadow: -10px 0 30px rgba(0,0,0,0.1); overflow-y: auto; }
         .cart-items-container { flex: 1; overflow-y: auto; margin-bottom: 1rem; }
         
-        /* עיצוב משודרג לסעיפי הסל עם תמונות ויישור גמיש */
         .cart-item { display: flex; align-items: center; gap: 12px; padding: 0.75rem; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 0.75rem; background: #f8fafc; }
         .cart-item-image { width: 50px; height: 50px; min-width: 50px; border-radius: 8px; overflow: hidden; background: #f1f5f9; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
         .cart-item-image img { width: 100%; height: 100%; object-fit: cover; }
@@ -66,6 +74,7 @@
         .cart-footer-fixed { border-top: 1px solid var(--border); padding-top: 1rem; flex-shrink: 0; }
         .btn-submit { width: 100%; padding: 1rem; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; font-size: 16px; }
         .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+        
         .loading { text-align: center; padding: 40px; }
         .spinner { width: 40px; height: 40px; border: 3px solid #eee; border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 10px; }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -86,7 +95,7 @@
 <div class="cart-overlay" id="cartOverlay" onclick="closeCart()">
     <div class="cart-panel" onclick="event.stopPropagation()">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; border-bottom:1px solid var(--border); padding-bottom:1rem; flex-shrink:0;">
-            <h3>🛒 סל ההזמנה</h3>
+            <h3>🛒 סל ההזמנה המאוחד</h3>
             <button onclick="closeCart()" style="border:none; background:none; cursor:pointer; font-size:1.2rem;">✕</button>
         </div>
         <div class="cart-items-container" id="cartItems"></div>
@@ -130,8 +139,16 @@
                 <input type="email" id="customerEmail" placeholder="email@example.com">
             </div>
         </div>
+        
         <div class="card">
             <h2>📦 בחירת דגמים</h2>
+            
+            <!-- לשוניות מעבר קולקציה -->
+            <div class="tabs-container">
+                <button class="tab-btn active" id="tab-summer" onclick="switchTab('summer')">☀️ קולקציית קיץ</button>
+                <button class="tab-btn" id="tab-winter" onclick="switchTab('winter')">❄️ קולקציית חורף 26</button>
+            </div>
+            
             <input type="text" class="search-box" id="searchInput" placeholder="🔍 חפש דגם..." oninput="filterProducts(this.value)">
             <div id="productsContainer"></div>
         </div>
@@ -147,30 +164,88 @@
 </div>
 
 <script>
-// ← החלף כאן את הקישור של Apps Script שלך
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzwFmxo8CyrjnzESKxRiry0SUqa7d41AbJLzvOc8vokSYBQ9RbR0XvShnL6jeje008-/exec';
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxZHL7AdBibVRxWpTBI4um9MJ79VDx0ZgAWuSlavx9PLD4n9eXe8ll9eHu0235XasHW/exec';
 
-let products = [];
-const sizeOrder = ["S","M","L","XL","XXL","3XL","4XL","5XL"];
+// מיפוי מתוקן: הקיץ פונה לגיליון "מלאי מחסן" האמיתי באקסל שלכם
+const TABS = {
+    summer: 'מלאי מחסן',
+    winter: 'קולקציית חורף 26'
+};
+
+const sizeOrder = ["XS","S","M","L","XL","XXL","3XL","4XL","5XL"];
+
+let currentTab = 'summer';       
+let tabCache = {};              
+let allProducts = {};            
+let currentTabProducts = [];     
+let cartState = {};              // { [model]: { sizes: { [size]: qty }, sheetName: "..." } }
 
 window.onload = function() {
-    fetch(`${APPS_SCRIPT_URL}?action=getProducts`)
+    document.getElementById('loadingDiv').style.display = 'none';
+    document.getElementById('mainForm').style.display = 'block';
+    loadTabProducts('summer');
+};
+
+function loadTabProducts(tabKey) {
+    const container = document.getElementById('productsContainer');
+    
+    if (tabCache[tabKey]) {
+        currentTabProducts = tabCache[tabKey];
+        renderProducts();
+        return;
+    }
+    
+    container.innerHTML = `
+        <div style="text-align: center; padding: 3rem;">
+            <div class="spinner"></div>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 10px;">טוען מוצרים מ${tabKey === 'summer' ? 'קולקציית קיץ' : 'קולקציית חורף 26'}...</p>
+        </div>
+    `;
+    
+    const sheetName = TABS[tabKey];
+    fetch(`${APPS_SCRIPT_URL}?action=getProducts&sheetName=${encodeURIComponent(sheetName)}`)
         .then(r => r.json())
         .then(data => {
-            products = data;
-            renderProducts();
-            document.getElementById('loadingDiv').style.display = 'none';
-            document.getElementById('mainForm').style.display = 'block';
+            tabCache[tabKey] = data;
+            
+            data.forEach(p => {
+                allProducts[p.model] = p; 
+            });
+            
+            if (currentTab === tabKey) {
+                currentTabProducts = data;
+                renderProducts();
+            }
         })
         .catch(err => {
-            document.getElementById('loadingDiv').innerHTML = `<p style="color:red">שגיאה בטעינה: ${err.message}</p>`;
+            container.innerHTML = `
+                <div style="text-align: center; padding: 2rem; color: var(--danger);">
+                    שגיאה בטעינת קולקציה: ${err.message}
+                    <br><button onclick="loadTabProducts('${tabKey}')" class="btn-serie" style="margin-top: 15px;">נסה שוב 🔄</button>
+                </div>
+            `;
         });
-};
+}
+
+function switchTab(tabKey) {
+    if (currentTab === tabKey) return;
+    
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(`tab-${tabKey}`).classList.add('active');
+    
+    currentTab = tabKey;
+    document.getElementById('searchInput').value = '';
+    loadTabProducts(tabKey);
+}
 
 function renderProducts() {
     const container = document.getElementById('productsContainer');
-    if (!products.length) { container.innerHTML = '<p style="text-align:center;color:#999;padding:2rem;">אין דגמים זמינים כרגע</p>'; return; }
-    container.innerHTML = products.map(p => {
+    if (!currentTabProducts.length) { 
+        container.innerHTML = '<p style="text-align:center;color:#999;padding:2rem;">אין דגמים זמינים כרגע בקולקציה זו</p>'; 
+        return; 
+    }
+    
+    container.innerHTML = currentTabProducts.map(p => {
         const sortedSizes = sizeOrder.filter(s => p.stock[s] !== undefined);
         return `
         <div class="product-card" data-model="${p.model}">
@@ -183,18 +258,49 @@ function renderProducts() {
                     <button class="btn-serie" onclick="addSerie('${p.model}')">📦 הוסף סריה</button>
                 </div>
                 <div class="sizes-grid">
-                    ${sortedSizes.map(size => `
+                    ${sortedSizes.map(size => {
+                        const currentVal = (cartState[p.model] && cartState[p.model].sizes[size]) ? cartState[p.model].sizes[size] : 0;
+                        const hasValClass = currentVal > 0 ? 'has-value' : '';
+                        return `
                         <div class="size-item">
                             <span class="size-label">${size}</span>
-                            <input class="size-input" type="number" min="0" max="${p.stock[size]}" value="0"
+                            <input class="size-input ${hasValClass}" type="number" min="0" max="${p.stock[size]}" value="${currentVal}"
                                 id="size_${p.model}_${size}"
-                                oninput="validateInput(this, ${p.stock[size]}); updateCartCount();">
+                                oninput="validateAndSetInput(this, ${p.stock[size]}, '${p.model}', '${size}')">
                         </div>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </div>
             </div>
         </div>`;
     }).join('');
+}
+
+function validateAndSetInput(input, max, modelId, size) {
+    let val = parseInt(input.value) || 0;
+    if (val < 0) val = 0;
+    if (val > max) val = max;
+    
+    input.value = val;
+    input.classList.toggle('has-value', val > 0);
+    
+    if (!cartState[modelId]) {
+        const p = allProducts[modelId];
+        cartState[modelId] = {
+            sizes: {},
+            sheetName: p && p.sheetName ? p.sheetName : (currentTab === 'summer' ? 'מלאי מחסן' : 'קולקציית חורף 26')
+        };
+    }
+    
+    cartState[modelId].sizes[size] = val;
+    
+    if (val === 0) {
+        delete cartState[modelId].sizes[size];
+        if (Object.keys(cartState[modelId].sizes).length === 0) {
+            delete cartState[modelId];
+        }
+    }
+    updateCartCount();
 }
 
 function openModal(imgUrl, title) {
@@ -203,62 +309,56 @@ function openModal(imgUrl, title) {
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalOverlay').classList.add('active');
 }
+
 function closeModal() {
     document.getElementById('modalOverlay').classList.remove('active');
     document.getElementById('modalImg').src = '';
 }
 
 function addSerie(modelId) {
-    const product = products.find(p => p.model === modelId);
+    const product = allProducts[modelId];
     if (!product) return;
+    
+    if (!cartState[modelId]) {
+        cartState[modelId] = {
+            sizes: {},
+            sheetName: product.sheetName || (currentTab === 'summer' ? 'מלאי מחסן' : 'קולקציית חורף 26')
+        };
+    }
+    
     Object.keys(product.stock).forEach(size => {
-        const input = document.getElementById(`size_${modelId}_${size}`);
-        if (input) {
-            let val = parseInt(input.value) || 0;
-            if (val < product.stock[size]) { input.value = val + 1; input.classList.add('has-value'); }
+        let currentVal = cartState[modelId].sizes[size] || 0;
+        if (currentVal < product.stock[size]) {
+            cartState[modelId].sizes[size] = currentVal + 1;
         }
     });
+    
+    renderProducts(); 
     updateCartCount();
 }
 
 function removeModelFromCart(modelId) {
-    const product = products.find(p => p.model === modelId);
-    if (!product) return;
-    Object.keys(product.stock).forEach(size => {
-        const input = document.getElementById(`size_${modelId}_${size}`);
-        if (input) { input.value = 0; input.classList.remove('has-value'); }
-    });
+    delete cartState[modelId];
+    renderProducts(); 
     updateCartCount();
     updateCartPanel();
 }
 
-// פונקציה חדשה לריקון ואיפוס מוחלט של כל הפריטים בסל למניעת כפילויות ושליחה חוזרת
 function clearCart() {
-    products.forEach(p => {
-        Object.keys(p.stock).forEach(size => {
-            const input = document.getElementById(`size_${p.model}_${size}`);
-            if (input) {
-                input.value = 0;
-                input.classList.remove('has-value');
-            }
-        });
-    });
+    cartState = {};
+    renderProducts();
     updateCartCount();
     updateCartPanel();
 }
 
-function validateInput(input, max) {
-    let val = parseInt(input.value) || 0;
-    if (val < 0) val = 0;
-    if (val > max) val = max;
-    input.value = val;
-    input.classList.toggle('has-value', val > 0);
-}
-
-// עדכון מונה הסל הראשי בראש הדף
 function updateCartCount() {
     let total = 0;
-    document.querySelectorAll('.size-input').forEach(i => total += (parseInt(i.value) || 0));
+    Object.values(cartState).forEach(item => {
+        Object.values(item.sizes).forEach(qty => {
+            total += qty;
+        });
+    });
+    
     const badge = document.getElementById('cartBadge');
     badge.textContent = total;
     badge.classList.toggle('hidden', total === 0);
@@ -267,39 +367,52 @@ function updateCartCount() {
 function openCart() { updateCartPanel(); document.getElementById('cartOverlay').classList.add('active'); }
 function closeCart() { document.getElementById('cartOverlay').classList.remove('active'); }
 
-// בנייה משופרת של הסל עם תמונות המוצרים בצד ימין
 function updateCartPanel() {
     const container = document.getElementById('cartItems');
     const footer = document.getElementById('cartFooter');
     const totalEl = document.getElementById('cartTotal');
     let html = '', totalQty = 0;
-    products.forEach(p => {
+    
+    Object.keys(cartState).forEach(modelId => {
+        const p = allProducts[modelId];
+        if (!p) return;
+        
         let pQty = 0, sizesHtml = '';
-        sizeOrder.forEach(s => {
-            const el = document.getElementById(`size_${p.model}_${s}`);
-            const val = el ? (parseInt(el.value) || 0) : 0;
-            if (val > 0) { pQty += val; sizesHtml += `<span class="cart-size-tag">${s}: ${val}</span>`; }
+        const sortedSizes = sizeOrder.filter(s => cartState[modelId].sizes[s] !== undefined);
+        
+        sortedSizes.forEach(s => {
+            const val = cartState[modelId].sizes[s] || 0;
+            if (val > 0) {
+                pQty += val;
+                sizesHtml += `<span class="cart-size-tag">${s}: ${val}</span>`;
+            }
         });
+        
         if (pQty > 0) {
             totalQty += pQty;
             html += `
             <div class="cart-item">
                 <div class="cart-item-image">
-                    ${p.image 
-                        ? `<img src="${p.image}" alt="דגם ${p.model}">` 
-                        : `<span style="font-size:1.2rem;color:#ccc;">📷</span>`
-                    }
+                    ${p.image ? `<img src="${p.image}" alt="דגם ${p.model}">` : `<span style="font-size:1.2rem;color:#ccc;">📷</span>`}
                 </div>
                 <div class="cart-item-info">
                     <div class="cart-item-title">דגם ${p.model}</div>
+                    <div style="color:var(--text-muted); font-size:0.75rem; margin-bottom:4px;">מקור: ${cartState[modelId].sheetName === 'מלאי מחסן' ? 'קולקציית קיץ' : cartState[modelId].sheetName}</div>
                     <div style="display:flex; flex-wrap:wrap; gap:2px;">${sizesHtml}</div>
                 </div>
                 <button class="btn-remove" onclick="removeModelFromCart('${p.model}')" title="הסר פריט">🗑️</button>
             </div>`;
         }
     });
-    if (totalQty === 0) { container.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:2rem;">הסל שלך ריק...</p>'; footer.style.display = 'none'; }
-    else { container.innerHTML = html; totalEl.textContent = `סה"כ פריטים: ${totalQty}`; footer.style.display = 'block'; }
+    
+    if (totalQty === 0) { 
+        container.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:2rem;">הסל שלך ריק...</p>'; 
+        footer.style.display = 'none'; 
+    } else { 
+        container.innerHTML = html; 
+        totalEl.textContent = `סה"כ פריטים בסל: ${totalQty}`; 
+        footer.style.display = 'block'; 
+    }
 }
 
 function filterProducts(q) {
@@ -323,15 +436,12 @@ function submitOrder() {
     }
 
     const orderItems = [];
-    products.forEach(p => {
-        const sizes = {};
-        let hasItem = false;
-        sizeOrder.forEach(s => {
-            const el = document.getElementById(`size_${p.model}_${s}`);
-            const val = el ? (parseInt(el.value) || 0) : 0;
-            if (val > 0) { sizes[s] = val; hasItem = true; }
+    Object.keys(cartState).forEach(modelId => {
+        orderItems.push({
+            model: modelId,
+            sizes: { ...cartState[modelId].sizes },
+            sheetName: cartState[modelId].sheetName
         });
-        if (hasItem) orderItems.push({ model: p.model, sizes });
     });
 
     if (!orderItems.length) {
@@ -346,13 +456,19 @@ function submitOrder() {
 
     fetch(APPS_SCRIPT_URL, {
         method: 'POST',
-        body: JSON.stringify({ action: 'submitOrder', customerName: name, customerPhone: phone, customerEmail: email, orderItems })
+        body: JSON.stringify({ 
+            action: 'submitOrder', 
+            customerName: name, 
+            customerPhone: phone, 
+            customerEmail: email, 
+            orderItems 
+        })
     })
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            closeCart();        // סוגר את פאנל הסל
-            clearCart();        // מאפס לחלוטין את כל הכמויות של המוצרים
+            closeCart();        
+            clearCart();        
             document.getElementById('mainForm').style.display = 'none';
             document.getElementById('successDiv').style.display = 'block';
         } else {
