@@ -130,12 +130,12 @@
                     <input type="text" id="customerName" placeholder="הכנס שם מלא">
                 </div>
                 <div class="form-group">
-                    <label>טלפון *</label>
+                    <label>טלפון </label>
                     <input type="tel" id="customerPhone" placeholder="050-0000000">
                 </div>
             </div>
             <div class="form-group">
-                <label>אימייל *</label>
+                <label>אימייל </label>
                 <input type="email" id="customerEmail" placeholder="email@example.com">
             </div>
         </div>
@@ -436,8 +436,8 @@ function submitOrder() {
     const errEl = document.getElementById('cartErrorMsg');
     errEl.style.display = 'none';
 
-    if (!name || !phone || !email) {
-        errEl.textContent = 'אנא מלא את כל פרטי הלקוח בטופס';
+    if (!name) {
+        errEl.textContent = 'אנא מלא שם';
         errEl.style.display = 'block';
         return;
     }
