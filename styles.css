@@ -297,6 +297,11 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .btn.violet  { background: var(--violet); }
 .btn.google  { background: #fff; color: #1f2937; border-color: var(--border-2); }
 .btn.google:hover:not(:disabled) { background: var(--surface-2); filter: none; }
+.btn.sm.future-order-btn {
+  min-height: 34px;
+  padding: .22rem .48rem;
+  font-size: .76rem;
+}
 
 /* ── לשוניות ──────────────────────────────────────────── */
 .tabs {
@@ -513,6 +518,64 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   min-height: var(--tap); display: flex; align-items: center;
 }
 .lines-wrap { display: flex; flex-wrap: wrap; gap: .25rem; padding-bottom: .4rem; }
+
+/* ── פריטי הזמנה בפאנל המנהל: תמונה, דגם ומידות באותה שורה ── */
+.admin-order-models {
+  display: flex; flex-direction: column; gap: .55rem;
+  margin-bottom: 1rem;
+}
+.admin-order-model {
+  display: grid;
+  grid-template-columns: 66px minmax(92px, 128px) minmax(0, 1fr);
+  align-items: center; gap: .65rem;
+  padding: .55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+.admin-order-model-image {
+  width: 66px; height: 82px;
+  border-radius: 9px; overflow: hidden;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+}
+.admin-order-model-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.admin-order-model-name { min-width: 0; overflow-wrap: anywhere; }
+.admin-order-sizes { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; min-width: 0; }
+.admin-order-size {
+  display: flex; align-items: center; gap: .4rem; flex-wrap: wrap;
+  min-height: 46px; padding: .3rem .4rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.admin-order-size.short { background: #fffbeb; border-color: #fcd34d; }
+.admin-order-size-label {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 38px; height: 36px; padding-inline: .35rem;
+  border-radius: 8px; background: var(--surface-3);
+  font-size: .8rem; font-weight: 800;
+}
+.admin-order-size-qty { display: flex; align-items: center; gap: .35rem; }
+.admin-order-size-qty label { display: flex; align-items: center; gap: .3rem; }
+.admin-order-size-qty input {
+  width: 54px; min-height: 36px; height: 36px;
+  padding: .2rem; text-align: center; font-weight: 800;
+}
+.admin-order-size-price { color: var(--muted); font-size: .72rem; white-space: nowrap; }
+.btn.sm.admin-order-size-delete { min-height: 34px; width: 34px; padding: 0; }
+
+@media (max-width: 520px) {
+  .admin-order-model {
+    grid-template-columns: 54px 68px minmax(0, 1fr);
+    gap: .45rem; padding: .45rem;
+  }
+  .admin-order-model-image { width: 54px; height: 70px; }
+  .admin-order-model-name { font-size: .86rem; }
+  .admin-order-size { gap: .3rem; padding: .25rem .3rem; }
+  .admin-order-size-label { min-width: 34px; height: 34px; }
+  .admin-order-size-price { flex-basis: 100%; padding-inline-start: .15rem; }
+}
 
 .order-invoices { border-top: 1px solid var(--border); margin-top: .6rem; padding-top: .6rem; }
 .oi-title { font-weight: 800; font-size: .87rem; margin-bottom: .4rem; }

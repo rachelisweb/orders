@@ -760,11 +760,13 @@ function renderOrders() {
     if (pendingView) {
       parts.push(`<button class="btn ghost sm" data-move-pending="${o.id}|up" title="הזזה למעלה">↑</button>`);
       parts.push(`<button class="btn ghost sm" data-move-pending="${o.id}|down" title="הזזה למטה">↓</button>`);
-      parts.push(`<button class="btn ghost sm" data-future-order="${o.id}|true">📅 לעונה הבאה</button>`);
     }
     if (next) {
       parts.push(`<button class="btn ${next === 'ready' ? 'success' : next === 'shipped' ? 'violet' : ''} sm"
         data-adv="${o.id}|${next}">${ORDER_STATUS[next].icon} ${esc(ORDER_STATUS[next].label)}</button>`);
+    }
+    if (pendingView) {
+      parts.push(`<button class="btn ghost sm future-order-btn" data-future-order="${o.id}|true">📅 לעונה הבאה</button>`);
     }
     if (o.status === 'shipped' && !nInv) {
       parts.push(`<button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>`);
@@ -986,12 +988,66 @@ async function notifyOrder(orderId, event) {
   catch (err) { console.warn('order-email failed', err); }
 }
 
+function groupOrderItemsByModel(lines) {
+  const groups = new Map();
+  for (const line of lines) {
+    if (!groups.has(line.model)) groups.set(line.model, { model: line.model, lines: [] });
+    groups.get(line.model).lines.push(line);
+  }
+  return [...groups.values()];
+}
+
+function renderAdminOrderItems(groups, editable, anyShort) {
+  return `<div class="admin-order-models">
+    ${groups.map((group) => {
+      const product = productByModel(group.model);
+      const units = group.lines.reduce((sum, line) => sum + Number(line.qty || 0), 0);
+      const total = group.lines.reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.unit_price || 0), 0);
+      return `<div class="admin-order-model">
+        <div class="admin-order-model-image">
+          ${product?.image_url
+            ? `<img src="${esc(img(product.image_url, 180))}" alt="דגם ${esc(group.model)}" loading="lazy" decoding="async">`
+            : '<div class="img-ph">📷</div>'}
+        </div>
+        <div class="admin-order-model-name">
+          <div class="bold">${esc(group.model)}</div>
+          <div class="small muted">${fmtNum(units)} יח׳${total > 0 ? ` · ${fmtMoney(total)}` : ''}</div>
+        </div>
+        <div class="admin-order-sizes">
+          ${group.lines.map((line) => {
+            const ordered = line.qty_ordered ?? line.qty;
+            const short = ordered !== line.qty;
+            const price = Number(line.unit_price || 0);
+            return `<div class="admin-order-size ${short ? 'short' : ''}">
+              <span class="admin-order-size-label">${esc(line.size)}</span>
+              <div class="admin-order-size-qty">
+                ${anyShort ? `<span class="small ${short ? 'qty-diff' : 'muted'}">הוזמן ${fmtNum(ordered)}</span>` : ''}
+                ${editable
+                  ? `<label class="small muted">${anyShort ? 'סופק' : 'כמות'}
+                       <input type="number" min="0" value="${line.qty}" data-item="${line.id}"
+                         aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">
+                     </label>`
+                  : `<b>${anyShort ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
+              </div>
+              <span class="admin-order-size-price">${price > 0
+                ? `${fmtMoney(price)} · ${fmtMoney(line.qty * price)}` : 'ללא מחיר'}</span>
+              ${editable ? `<button class="btn danger sm admin-order-size-delete" data-del-item="${line.id}"
+                title="מחיקת מידה ${esc(line.size)}" aria-label="מחיקת דגם ${esc(line.model)} מידה ${esc(line.size)}">🗑️</button>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
 function openOrder(id) {
   const o = db.orders.find((x) => x.id === id);
   if (!o) return;
 
   const lines = (o.order_items || []).slice()
     .sort((a, b) => a.model.localeCompare(b.model, 'he') || sortSizes(a.size, b.size));
+  const itemGroups = groupOrderItemsByModel(lines);
   const invs = db.invoices.filter((v) => v.order_id === o.id);
   const editable = o.status === 'pending' && !o.stock_applied;
   const isFuture = o.status === 'pending' && !!o.future_order_at;
@@ -1052,34 +1108,13 @@ function openOrder(id) {
     </div>
     <button class="btn ghost sm" id="admNotesSave" style="margin-bottom:1.1rem">שמירת ההערה</button>
 
-    <h4 class="bold" style="margin-bottom:.5rem">פריטים (${lines.length})</h4>
+    <h4 class="bold" style="margin-bottom:.5rem">פריטים (${itemGroups.length} דגמים · ${lines.length} מידות)</h4>
     ${editable
       ? '<div class="note small">✏️ ניתן לשנות כמויות ולמחוק שורות כל עוד ההזמנה ממתינה. אחרי סימון "מוכנה לאיסוף" המלאי יורד וההזמנה ננעלת.</div>'
       : '<div class="note small">🔒 ההזמנה נעולה לעריכה — המלאי כבר עודכן.</div>'}
     ${anyShort ? '<div class="note warn small">⚠️ בשורות המסומנות הכמות שסופקה שונה ממה שהלקוח הזמין. הלקוח רואה את שתי הכמויות באזור האישי.</div>' : ''}
 
-    <div class="table-wrap" style="margin-bottom:1rem">
-      <table class="responsive"><thead><tr>
-        <th>דגם</th><th>מידה</th>${anyShort ? '<th class="num">הוזמן</th>' : ''}
-        <th class="num">${anyShort ? 'סופק' : 'כמות'}</th><th class="num">מחיר</th><th class="num">סה״כ</th>${editable ? '<th></th>' : ''}
-      </tr></thead><tbody>
-      ${lines.map((l) => {
-        const ord = l.qty_ordered ?? l.qty;
-        const short = ord !== l.qty;
-        return `<tr class="${short ? 'short' : ''}">
-        ${td('דגם', esc(l.model), 'bold')}
-        ${td('מידה', esc(l.size))}
-        ${anyShort ? td('הוזמן', `<span class="${short ? 'qty-diff' : 'muted'}">${ord}</span>`, 'num') : ''}
-        ${td(anyShort ? 'סופק' : 'כמות', editable
-          ? `<input type="number" min="0" value="${l.qty}" data-item="${l.id}"
-               style="width:74px;text-align:center;font-weight:800;min-height:40px">`
-          : l.qty, 'num')}
-        ${td('מחיר', l.unit_price > 0 ? fmtMoney(l.unit_price) : '—', 'num')}
-        ${td('סה״כ', l.unit_price > 0 ? fmtMoney(l.qty * l.unit_price) : '—', 'num')}
-        ${editable ? td('', `<button class="btn danger sm" data-del-item="${l.id}">🗑️</button>`) : ''}
-      </tr>`; }).join('')}
-      </tbody></table>
-    </div>
+    ${renderAdminOrderItems(itemGroups, editable, anyShort)}
 
     <h4 class="bold" style="margin-bottom:.5rem">חשבוניות (${invs.length})</h4>
     ${invs.length
