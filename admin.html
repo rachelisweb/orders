@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1e293b">
+<title>רחליס — ניהול</title>
+<link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="toast" id="toast"></div>
+
+<div class="screen" id="denyScreen">
+  <div class="auth-wrap">
+    <div class="auth-card center">
+      <div style="font-size:2.6rem;margin-bottom:.6rem">🔒</div>
+      <h1 style="font-size:1.2rem;font-weight:800;margin-bottom:.5rem">אזור מנהלים</h1>
+      <p class="muted small" id="denyMsg" style="margin-bottom:1.2rem">נדרשת התחברות כמנהל.</p>
+      <div class="row" style="justify-content:center">
+        <a class="btn" href="index.html">לאפליקציה</a>
+        <button class="btn ghost" id="denySignout">התנתקות</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="screen" id="adminScreen">
+  <div class="header">
+    <div class="head-txt">
+      <h1>⚙️ ניהול רחליס</h1>
+      <div class="sub" id="headerSub">—</div>
+    </div>
+    <div class="grow"></div>
+    <button class="icon-btn" id="refreshBtn" title="רענון" aria-label="רענון">🔄</button>
+    <div class="menu-wrap">
+      <button class="icon-btn" id="accountBtn" aria-label="החשבון שלי">👤</button>
+      <div class="menu" id="accountMenu">
+        <div class="who">
+          <div class="name" id="whoName">—</div>
+          <div class="mail" id="whoMail"></div>
+        </div>
+        <button id="navApp">👁️ תצוגת לקוח</button>
+        <button id="navSignout" class="danger">🚪 התנתקות</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container wide">
+    <div class="tabs" id="adminTabs">
+      <button class="tab active" data-tab="dash">📊 דשבורד</button>
+      <button class="tab" data-tab="orders">📋 הזמנות <span class="tab-count" id="cntOrders">0</span></button>
+      <button class="tab" data-tab="demand">🎯 ריכוז לפי דגם</button>
+      <button class="tab" data-tab="stock">📦 מלאי</button>
+      <button class="tab" data-tab="returns">🔄 חזרות <span class="tab-count" id="cntReturns">0</span></button>
+      <button class="tab" data-tab="profit">💰 רווחיות</button>
+      <button class="tab" data-tab="collections">🗂️ קולקציות</button>
+      <button class="tab" data-tab="customers">👥 לקוחות</button>
+      <button class="tab" data-tab="invoices">🧾 חשבוניות</button>
+      <button class="tab" data-tab="settings">⚙️ הגדרות</button>
+    </div>
+
+    <!-- ══ דשבורד ══ -->
+    <div class="view active" id="tab-dash">
+
+      <!-- מה שדורש טיפול — תמיד פתוח -->
+      <div class="card urgent" id="actionCard">
+        <h2>⏳ דורש טיפול <span class="grow"></span>
+          <button class="btn ghost sm" id="goOrders">לכל ההזמנות →</button>
+        </h2>
+        <div id="pendingList"></div>
+      </div>
+
+      <div class="kpis" id="kpis"></div>
+
+      <details class="card fold" open>
+        <summary><span class="ttl">🏆 דגמים מבוקשים</span></summary>
+        <div class="fold-body">
+          <div class="row" style="margin-bottom:.7rem">
+            <button class="btn ghost sm" id="exportTop">⬇️ ייצוא</button>
+          </div>
+          <div id="topModels"></div>
+        </div>
+      </details>
+
+      <details class="card fold">
+        <summary><span class="ttl">👑 לקוחות מובילים</span></summary>
+        <div class="fold-body"><div id="topCustomers"></div></div>
+      </details>
+
+      <details class="card fold">
+        <summary><span class="ttl">⚠️ מלאי נמוך</span><span class="fold-hint" id="lowHint"></span></summary>
+        <div class="fold-body"><div id="lowStock"></div></div>
+      </details>
+    </div>
+
+    <!-- ══ הזמנות ══ -->
+    <div class="view" id="tab-orders">
+      <div class="card">
+        <h2>📋 הזמנות <span class="grow"></span>
+          <button class="btn sm" id="newOrderBtn">➕ הזמנה חדשה</button>
+          <button class="btn ghost sm" id="exportOrdersFlat">⬇️ מפורט</button>
+          <button class="btn ghost sm" id="exportOrdersSum">⬇️ מסכם</button>
+        </h2>
+        <div class="tabs" id="statusTabs"></div>
+        <div id="ordersTable"></div>
+      </div>
+    </div>
+
+    <!-- ══ ריכוז לפי דגם ══ -->
+    <div class="view" id="tab-demand">
+      <div class="card">
+        <h2>🎯 ריכוז לפי דגם <span class="grow"></span>
+          <button class="btn ghost sm" id="exportDemandMatrix">⬇️ מטריצה</button>
+          <button class="btn sm" id="exportDemandSupplier">📤 טופס לספק</button>
+        </h2>
+        <div class="row" style="margin-bottom:.8rem">
+          <select id="dmCollection" style="max-width:230px"></select>
+          <input type="search" id="dmModel" class="grow" placeholder="🔍 מספר דגם…">
+          <select id="dmStatus" style="max-width:190px">
+            <option value="">כל הסטטוסים</option>
+          </select>
+        </div>
+        <div class="note small">
+          כמה יחידות הוזמנו מכל דגם בפילוח מידות. <b>לחיצה על שורה</b> פותחת פירוט
+          מי הזמין וכמה. "טופס לספק" מייצר קובץ נקי בלי מחירים ובלי שמות לקוחות.
+        </div>
+        <div id="demandTable"></div>
+      </div>
+    </div>
+
+    <!-- ══ מלאי ══ -->
+    <div class="view" id="tab-stock">
+      <div class="card">
+        <h2>📦 מלאי <span class="grow"></span>
+          <button class="btn ghost sm" id="exportStock">⬇️ ייצוא</button>
+          <button class="btn ghost sm" id="newReturnStock">🔄 קליטת חזרה</button>
+          <button class="btn sm" id="addProductBtn">➕ דגם</button>
+        </h2>
+        <div class="row" style="margin-bottom:.8rem">
+          <select id="stockCollection" style="max-width:230px"></select>
+          <input type="search" id="stockSearch" class="grow" placeholder="🔍 חפש דגם…">
+        </div>
+        <div class="row" style="margin-bottom:.8rem">
+          <label class="row small" style="gap:.4rem;min-height:44px">
+            <input type="checkbox" id="stockSortMode"> ✋ מצב סידור (גרירה)
+          </label>
+          <span class="grow"></span>
+          <!-- הכותרת של הטבלה מוסתרת בנייד, ולכן "בחר הכל" חייב לחיות גם כאן -->
+          <button class="btn ghost sm" id="pickAllBtn">☑️ בחר את כל המוצגים</button>
+        </div>
+        <div class="note small" id="sortHint" style="display:none">
+          גרור את השורות כדי לשנות את סדר ההצגה בקטלוג. הסדר נשמר אוטומטית.
+        </div>
+        <div class="bulk-bar" id="bulkBar">
+          <span id="bulkCount">0 דגמים נבחרו</span>
+          <span class="grow"></span>
+          <button class="btn sm" id="bulkPrices">💲 הגדרת מחירים</button>
+          <button class="btn ghost sm" id="bulkClear">ניקוי הבחירה</button>
+        </div>
+        <div id="stockList"></div>
+      </div>
+    </div>
+
+    <!-- ══ חזרות ══ -->
+    <div class="view" id="tab-returns">
+      <div class="card">
+        <h2>🔄 חזרות <span class="grow"></span>
+          <button class="btn ghost sm" id="exportReturns">⬇️ ייצוא</button>
+          <button class="btn sm" id="newReturnBtn">➕ קליטת חזרה</button>
+        </h2>
+        <div class="note small">
+          פריט תקין נכנס למלאי הכללי כבר בקליטה ומתווסף לדגם הקיים. פריט
+          <b>פגום</b> לא נכנס למלאי — אפשר לצלם אותו במקום להקליד דגם.
+          <b>"בוצע זיכוי"</b> מעביר את החזרה לארכיון.
+        </div>
+        <div class="tabs" id="returnTabs"></div>
+        <div id="returnsTable"></div>
+      </div>
+    </div>
+
+    <!-- ══ רווחיות ══ -->
+    <div class="view" id="tab-profit">
+      <div class="card">
+        <h2>💰 רווחיות <span class="grow"></span>
+          <button class="btn ghost sm" id="exportProfit">⬇️ ייצוא</button>
+        </h2>
+        <div class="note small">
+          המחזור מחושב לפי <b>מחיר סיטונאי</b> (מה שהלקוח משלם) פחות <b>מחיר עלות</b>,
+          בניכוי הנחות שניתנו על הזמנות. הזמנות מבוטלות לא נספרות.
+        </div>
+
+        <div class="card" style="padding:.8rem;background:var(--surface-2)">
+          <div class="row" style="align-items:flex-end">
+            <div class="field" style="margin:0;max-width:220px">
+              <label for="profitStart">📅 החישוב מתחיל מתאריך</label>
+              <input type="date" id="profitStart">
+            </div>
+            <button class="btn sm" id="profitStartSave">שמירה</button>
+            <button class="btn ghost sm" id="profitStartClear">כל ההיסטוריה</button>
+          </div>
+          <div class="small muted" id="profitStartHint" style="margin-top:.5rem"></div>
+        </div>
+        <div class="note warn small" id="costWarn" style="display:none"></div>
+        <div class="kpis" id="profitKpis"></div>
+        <h3 class="bold" style="margin:.5rem 0 .6rem">פילוח חודשי</h3>
+        <div id="profitMonthly"></div>
+        <h3 class="bold" style="margin:1.4rem 0 .6rem">רווח לפי דגם</h3>
+        <div id="profitByModel"></div>
+      </div>
+    </div>
+
+    <!-- ══ קולקציות ══ -->
+    <div class="view" id="tab-collections">
+      <div class="card">
+        <h2>🗂️ קולקציות <span class="grow"></span>
+          <button class="btn sm" id="addCollectionBtn">➕ קולקציה</button>
+        </h2>
+        <div class="note small">✋ גרור לשינוי סדר הלשוניות אצל הלקוחות.</div>
+        <div id="collectionList" class="sortable"></div>
+      </div>
+    </div>
+
+    <!-- ══ לקוחות ══ -->
+    <div class="view" id="tab-customers">
+      <div class="card">
+        <h2>👥 לקוחות <span id="customersCount" class="faint small"></span><span class="grow"></span>
+          <button class="btn ghost sm" id="exportCustomers">⬇️ ייצוא</button>
+          <button class="btn ghost sm" id="mergeCustomersBtn">🔗 איחוד</button>
+          <button class="btn sm" id="addCustomerBtn">➕ לקוח</button>
+        </h2>
+        <input type="search" id="customerSearch" placeholder="🔍 חפש לקוח…" style="margin-bottom:.8rem">
+        <div id="customersTable"></div>
+      </div>
+    </div>
+
+    <!-- ══ חשבוניות ══ -->
+    <div class="view" id="tab-invoices">
+      <div class="card">
+        <h2>🧾 חשבוניות <span id="invoicesCount" class="faint small"></span><span class="grow"></span>
+          <button class="btn ghost sm" id="exportInvoices">⬇️ ייצוא</button>
+          <button class="btn sm" id="uploadInvoiceBtn">⬆️ העלאה</button>
+        </h2>
+        <div class="row" style="margin-bottom:.8rem">
+          <select id="invCustomer" style="max-width:250px"><option value="">כל הלקוחות</option></select>
+          <select id="invStatus" style="max-width:170px">
+            <option value="">כל הסטטוסים</option>
+            <option value="unpaid">לא שולמה</option>
+            <option value="paid">שולמה</option>
+            <option value="cancelled">בוטלה</option>
+          </select>
+        </div>
+        <div id="invoicesTable"></div>
+      </div>
+    </div>
+
+    <!-- ══ הגדרות ══ -->
+    <div class="view" id="tab-settings">
+      <div class="card">
+        <h2>🔄 סנכרון שופיפיי</h2>
+        <div class="note small">
+          מעלה לשופיפיי את המלאי ואת <b>מחיר לקוח קצה</b> של כל דגם פעיל.
+          דגם שאינו קיים בחנות נוצר כטיוטה.
+        </div>
+        <div class="row">
+          <button class="btn lg" id="syncShopifyBtn">🔄 סנכרן לשופיפיי עכשיו</button>
+        </div>
+        <div id="syncResult" style="margin-top:.9rem"></div>
+      </div>
+
+      <div class="card">
+        <h2>📧 התראות על הזמנה חדשה <span class="grow"></span>
+          <button class="btn sm" id="addEmailBtn">➕ כתובת</button>
+        </h2>
+        <div class="note small">הכתובות האלה יקבלו מייל בכל פעם שנכנסת הזמנה חדשה.</div>
+        <div id="emailsTable"></div>
+
+        <h3 class="bold" style="margin:1.2rem 0 .5rem">🧪 בדיקת שליחה</h3>
+        <div class="note small">
+          שולח מייל בדיקה אמיתי דרך ה-SMTP. זו הדרך לוודא שקוד האפליקציה
+          של ג'ימייל הוגדר נכון, בלי לחכות להזמנה אמיתית.
+        </div>
+        <div class="row">
+          <input type="email" id="testMailTo" class="grow" inputmode="email"
+                 placeholder="לאיזו כתובת לשלוח?" style="max-width:320px">
+          <button class="btn" id="testMailBtn">📤 שלח מייל בדיקה</button>
+        </div>
+        <div id="testMailResult" style="margin-top:.7rem"></div>
+      </div>
+
+      <div class="card">
+        <h2>🔑 משתמשים <span id="usersCount" class="faint small"></span></h2>
+        <div class="note small">
+          כרטיס לקוח נוצר אוטומטית בהרשמה. כאן אפשר לשייך מחדש משתמש לכרטיס אחר
+          או לשנות את התפקיד שלו. <b>מנהל</b> רואה את כל המערכת;
+          <b>לקוח</b> רואה רק את הקטלוג וההזמנות שלו.
+          את התפקיד של עצמך אי אפשר לשנות — כדי שלא תינעל בטעות מחוץ למערכת.
+        </div>
+        <div id="usersTable"></div>
+      </div>
+
+      <div class="card">
+        <h2>⚙️ כללי</h2>
+        <div id="settingsForm"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ יצירת הזמנה ══ -->
+<div class="overlay" id="newOrderOverlay">
+  <div class="panel wide">
+    <div class="panel-head">
+      <h3>➕ הזמנה חדשה</h3>
+      <div class="grow"></div>
+      <button class="btn ghost sm" id="newOrderClear">ניקוי</button>
+      <button class="icon-btn plain" data-close="newOrderOverlay" aria-label="סגירה">✕</button>
+    </div>
+
+    <div class="panel-body">
+      <div class="card">
+        <h2>👤 לקוח</h2>
+        <div class="sub-tabs" id="newOrderCustomerMode">
+          <button class="on" data-new-order-mode="existing">לקוח קיים</button>
+          <button data-new-order-mode="new">לקוח חדש</button>
+        </div>
+
+        <div id="newOrderExistingCustomer">
+          <div class="field customer-combobox" id="newOrderCustomerCombobox">
+            <label for="newOrderCustomerSearch">לקוח <span class="req">*</span></label>
+            <input type="search" id="newOrderCustomerSearch"
+                   placeholder="הקלד שם, עסק, טלפון או אימייל…"
+                   autocomplete="off" role="combobox" aria-autocomplete="list"
+                   aria-controls="newOrderCustomerList" aria-expanded="false">
+            <input type="hidden" id="newOrderCustomer">
+            <div class="customer-options" id="newOrderCustomerList" role="listbox"></div>
+            <div class="hint">יש לבחור לקוח מתוך הרשימה</div>
+          </div>
+        </div>
+
+        <div id="newOrderNewCustomer" style="display:none">
+          <div class="grid-2">
+            <div class="field"><label for="newOrderName">שם <span class="req">*</span></label>
+              <input type="text" id="newOrderName" autocomplete="name"></div>
+            <div class="field"><label for="newOrderBusiness">שם עסק</label>
+              <input type="text" id="newOrderBusiness" autocomplete="organization"></div>
+            <div class="field"><label for="newOrderPhone">טלפון</label>
+              <input type="tel" id="newOrderPhone" autocomplete="tel" inputmode="tel"></div>
+            <div class="field"><label for="newOrderEmail">אימייל</label>
+              <input type="email" id="newOrderEmail" autocomplete="email" inputmode="email"></div>
+            <div class="field"><label for="newOrderCity">עיר</label>
+              <input type="text" id="newOrderCity" autocomplete="address-level2"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🛍️ מוצרים</h2>
+        <div class="tabs" id="newOrderCollectionTabs"></div>
+        <div class="row search-row" style="flex-wrap:nowrap">
+          <input type="search" id="newOrderProductSearch" class="grow" placeholder="🔍 חפש דגם…" inputmode="search">
+        </div>
+        <div id="newOrderProductList"></div>
+      </div>
+    </div>
+
+    <div class="panel-foot">
+      <div class="field">
+        <label for="newOrderNotes">הערות להזמנה</label>
+        <textarea id="newOrderNotes" rows="2" placeholder="בקשות מיוחדות, תיאום אספקה…"></textarea>
+      </div>
+      <div class="row" style="justify-content:space-between;margin-bottom:.75rem">
+        <span class="bold" id="newOrderSummary">הסל ריק</span>
+      </div>
+      <div class="err-msg" id="newOrderError"></div>
+      <button class="btn block lg" id="newOrderSubmit">יצירת הזמנה</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ פאנל הזמנה ══ -->
+<div class="overlay" id="orderOverlay">
+  <div class="panel wide">
+    <div class="panel-head">
+      <h3 id="orderPanelTitle">הזמנה</h3>
+      <div class="grow"></div>
+      <button class="icon-btn plain" data-close="orderOverlay" aria-label="סגירה">✕</button>
+    </div>
+    <div class="panel-body" id="orderPanelBody"></div>
+    <div class="panel-foot" id="orderPanelFoot"></div>
+  </div>
+</div>
+
+<!-- ══ פאנל לקוח ══ -->
+<div class="overlay" id="customerOverlay">
+  <div class="panel wide">
+    <div class="panel-head">
+      <h3 id="customerPanelTitle">לקוח</h3>
+      <div class="grow"></div>
+      <button class="icon-btn plain" data-close="customerOverlay" aria-label="סגירה">✕</button>
+    </div>
+    <div class="panel-body" id="customerPanelBody"></div>
+  </div>
+</div>
+
+<!-- ══ מודאל ══ -->
+<div class="modal" id="modal">
+  <div class="modal-box" id="modalBox">
+    <button class="modal-x" data-close-modal aria-label="סגירה">✕</button>
+    <h3 id="modalTitle" style="font-size:1.05rem;font-weight:800;margin:0 2.2rem 1rem 0"></h3>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script type="module" src="admin.js"></script>
+</body>
+</html>

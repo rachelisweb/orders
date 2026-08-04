@@ -1,496 +1,283 @@
 <!DOCTYPE html>
 <html dir="rtl" lang="he">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>טופס הזמנה רחליס</title>
-    <style>
-        :root {
-            --primary: #1e293b;
-            --accent: #3b82f6;
-            --success: #10b981;
-            --danger: #ef4444;
-            --bg: #f8fafc;
-            --border: #e2e8f0;
-            --text-main: #0f172a;
-            --text-muted: #64748b;
-            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Assistant', 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text-main); min-height: 100vh; }
-        .header { background: var(--primary); color: white; padding: 1rem 1.5rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow); }
-        .cart-btn { position: relative; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 20px; }
-        .cart-badge { position: absolute; top: -6px; right: -6px; background: var(--danger); color: white; border-radius: 999px; min-width: 20px; height: 20px; font-size: 0.7rem; font-weight: 800; display: flex; align-items: center; justify-content: center; border: 2px solid var(--primary); }
-        .cart-badge.hidden { display: none; }
-        .container { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
-        .card { background: white; border-radius: 16px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid var(--border); box-shadow: var(--shadow); }
-        .card h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
-        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .form-group { margin-bottom: 1rem; }
-        .form-group label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.5rem; }
-        .form-group input, .search-box { width: 100%; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 10px; background: #fcfcfc; font-size: 14px; }
-        .form-group input:focus, .search-box:focus { outline: none; border-color: var(--accent); }
-        .search-box { margin-bottom: 1.5rem; }
-        
-        /* עיצוב הלשוניות העליונות */
-        .tabs-container { display: flex; gap: 8px; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border); padding-bottom: 8px; }
-        .tab-btn { flex: 1; padding: 12px 16px; background: none; border: none; border-radius: 8px; font-size: 0.95rem; font-weight: 700; color: var(--text-muted); cursor: pointer; transition: all 0.2s ease; text-align: center; display: flex; align-items: center; justify-content: center; gap: 6px; }
-        .tab-btn.active { background: var(--accent); color: white; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25); }
-        .tab-btn:hover:not(.active) { background: #f1f5f9; color: var(--text-main); }
-
-        .product-card { border: 1px solid var(--border); border-radius: 14px; margin-bottom: 1rem; background: white; display: flex; overflow: hidden; }
-        .product-image { width: 110px; min-width: 110px; background: #f1f5f9; cursor: pointer; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-        .product-image img { width: 100%; height: 100%; object-fit: cover; }
-        .zoom-icon { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.45); border-radius: 4px; padding: 3px 6px; color: white; font-size: 12px; }
-        .product-body { padding: 1rem; flex: 1; }
-        .product-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-        .btn-serie { background: #f1f5f9; border: 1px solid var(--border); color: var(--primary); padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
-        .sizes-grid { display: flex; flex-wrap: wrap; gap: 12px; }
-        .size-item { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-        .size-label { font-size: 0.7rem; font-weight: 700; color: var(--text-muted); }
-        .size-input { width: 48px; height: 36px; text-align: center; border: 2px solid var(--border); border-radius: 8px; font-weight: 700; font-size: 14px; }
-        .size-input.has-value { border-color: var(--success); background: #ecfdf5; color: var(--success); }
-        
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.75); z-index: 999; align-items: center; justify-content: center; }
-        .modal-overlay.active { display: flex; }
-        .modal-box { background: white; border-radius: 14px; padding: 14px; max-width: 420px; width: 90%; position: relative; }
-        .modal-box img { width: 100%; border-radius: 10px; object-fit: contain; max-height: 500px; }
-        .modal-close { position: absolute; top: 10px; left: 10px; width: 30px; height: 30px; background: #eee; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; border: none; }
-        
-        .cart-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15,23,42,0.8); backdrop-filter: blur(4px); z-index: 998; }
-        .cart-overlay.active { display: flex; }
-        .cart-panel { background: white; width: 400px; max-width: 100vw; height: 100vh; position: absolute; left: 0; padding: 1.5rem; display: flex; flex-direction: column; box-shadow: -10px 0 30px rgba(0,0,0,0.1); overflow-y: auto; }
-        .cart-items-container { flex: 1; overflow-y: auto; margin-bottom: 1rem; }
-        
-        .cart-item { display: flex; align-items: center; gap: 12px; padding: 0.75rem; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 0.75rem; background: #f8fafc; }
-        .cart-item-image { width: 50px; height: 50px; min-width: 50px; border-radius: 8px; overflow: hidden; background: #f1f5f9; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
-        .cart-item-image img { width: 100%; height: 100%; object-fit: cover; }
-        .cart-item-info { flex: 1; min-width: 0; }
-        .cart-item-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 4px; }
-        .btn-remove { color: var(--danger); background: none; border: none; cursor: pointer; font-size: 1.15rem; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
-        .btn-remove:hover { background: #fee2e2; }
-        
-        .cart-size-tag { display: inline-block; background: white; border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; margin: 2px; }
-        .cart-footer-fixed { border-top: 1px solid var(--border); padding-top: 1rem; flex-shrink: 0; }
-        .btn-submit { width: 100%; padding: 1rem; background: var(--primary); color: white; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; font-size: 16px; }
-        .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
-        
-        .loading { text-align: center; padding: 40px; }
-        .spinner { width: 40px; height: 40px; border: 3px solid #eee; border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 10px; }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .error-msg { color: var(--danger); font-size: 0.85rem; margin-bottom: 1rem; }
-        @media (max-width: 600px) { .form-row { grid-template-columns: 1fr; } .cart-panel { width: 100vw; } }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1e293b">
+<title>רחליס — הזמנות</title>
+<link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<div class="modal-overlay" id="modalOverlay" onclick="closeModal()">
-    <div class="modal-box" onclick="event.stopPropagation()">
-        <button class="modal-close" onclick="closeModal()">✕</button>
-        <img id="modalImg" src="" alt="">
-        <div id="modalTitle" style="text-align:center; font-weight:700; margin-top:10px;"></div>
+<div class="toast" id="toast"></div>
+
+<!-- ══════════ התחברות ══════════ -->
+<div class="screen" id="authScreen">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="logo">
+        <div class="mark">🛍️</div>
+        <h1>רחליס</h1>
+        <p>מערכת הזמנות סיטונאית</p>
+      </div>
+
+      <div class="err-msg" id="authError"></div>
+
+      <button class="btn google block lg" id="googleBtn">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.8 6.1C12.2 13.3 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.7 7l7.6 5.9c4.4-4.1 6.8-10.1 6.8-17.4z"/><path fill="#FBBC05" d="M10.3 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.3.8-4.7l-7.8-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.8-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.8 2.3-8.3 2.3-6.4 0-11.8-3.8-13.7-9.8l-7.8 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+        המשך עם Google
+      </button>
+
+      <div class="divider">או עם אימייל</div>
+
+      <div class="field">
+        <label for="authEmail">אימייל</label>
+        <input type="email" id="authEmail" autocomplete="email" inputmode="email" placeholder="name@example.com">
+      </div>
+      <div class="field">
+        <label for="authPassword">סיסמה</label>
+        <input type="password" id="authPassword" autocomplete="current-password" placeholder="לפחות 6 תווים">
+      </div>
+      <div id="signupFields" style="display:none">
+        <div class="field">
+          <label for="authName">שם מלא</label>
+          <input type="text" id="authName" autocomplete="name" placeholder="השם שלך">
+        </div>
+      </div>
+
+      <button class="btn block lg" id="authSubmit">התחברות</button>
+      <div class="center" style="margin-top:1rem">
+        <button class="btn ghost sm" id="authToggle">אין לי חשבון — הרשמה</button>
+      </div>
     </div>
+  </div>
 </div>
 
-<div class="cart-overlay" id="cartOverlay" onclick="closeCart()">
-    <div class="cart-panel" onclick="event.stopPropagation()">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem; border-bottom:1px solid var(--border); padding-bottom:1rem; flex-shrink:0;">
-            <h3>🛒 סל ההזמנה המאוחד</h3>
-            <button onclick="closeCart()" style="border:none; background:none; cursor:pointer; font-size:1.2rem;">✕</button>
-        </div>
-        <div class="cart-items-container" id="cartItems"></div>
-        <div class="cart-footer-fixed" id="cartFooter" style="display:none;">
-            <div id="cartTotal" style="font-size:1.1rem; font-weight:800; margin-bottom:1rem;"></div>
-            <div id="cartErrorMsg" class="error-msg" style="display:none;"></div>
-            <button class="btn-submit" id="submitBtn" onclick="submitOrder()">שלח הזמנה עכשיו</button>
-        </div>
+<!-- ══════════ השלמת פרטים (כניסה ראשונה) ══════════ -->
+<div class="screen" id="profileScreen">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="logo">
+        <div class="mark">👋</div>
+        <h1>ברוך הבא!</h1>
+        <p>עוד פרט או שניים ואפשר להתחיל להזמין</p>
+      </div>
+
+      <div class="err-msg" id="profileError"></div>
+
+      <div class="field">
+        <label for="pfName">שם מלא <span class="req">*</span></label>
+        <input type="text" id="pfName" autocomplete="name" placeholder="השם שלך">
+      </div>
+      <div class="field">
+        <label for="pfBusiness">שם העסק / החנות</label>
+        <input type="text" id="pfBusiness" autocomplete="organization" placeholder="החנות שלי">
+        <div class="hint">אם כבר קיים עסק בשם הזה, החשבון יסומן לבדיקה ורק מנהל יוכל לאשר איחוד</div>
+      </div>
+      <div class="field">
+        <label for="pfPhone">טלפון <span class="req">*</span></label>
+        <input type="tel" id="pfPhone" autocomplete="tel" inputmode="tel" placeholder="050-0000000">
+      </div>
+      <div class="field">
+        <label for="pfCity">עיר</label>
+        <input type="text" id="pfCity" autocomplete="address-level2" placeholder="לדוגמה: בני ברק">
+      </div>
+
+      <button class="btn block lg" id="pfSave">שמירה והמשך</button>
+      <div class="center" style="margin-top:1rem">
+        <button class="btn ghost sm" id="pfSignout">התנתקות</button>
+      </div>
     </div>
+  </div>
 </div>
 
-<div class="header">
-    <h1>🛍️ טופס הזמנה רחליס</h1>
-    <button class="cart-btn" onclick="openCart()">
-        🛒
-        <div class="cart-badge hidden" id="cartBadge">0</div>
+<!-- ══════════ חסרה תצורה ══════════ -->
+<div class="screen" id="configScreen">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="logo"><div class="mark">⚙️</div><h1>נדרשת הגדרה</h1></div>
+      <p class="muted">
+        חסרים פרטי החיבור ל-Supabase. פתח את <code>config.js</code> והזן
+        <code>SUPABASE_URL</code> ו-<code>SUPABASE_ANON_KEY</code>.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ האפליקציה ══════════ -->
+<div class="screen" id="appScreen">
+
+  <div class="header">
+    <div class="head-txt">
+      <h1 id="headerTitle">🛍️ רחליס</h1>
+      <div class="sub" id="headerSub">הזמנה חדשה</div>
+    </div>
+    <div class="grow"></div>
+
+    <button class="icon-btn" id="cartBtn" title="סל ההזמנה" aria-label="סל ההזמנה">
+      🛒<span class="badge hidden" id="cartBadge">0</span>
     </button>
+
+    <div class="menu-wrap">
+      <button class="icon-btn" id="accountBtn" title="החשבון שלי" aria-label="החשבון שלי">👤</button>
+      <div class="menu" id="accountMenu">
+        <div class="who">
+          <div class="name" id="whoName">—</div>
+          <div class="mail" id="whoMail"></div>
+        </div>
+        <button id="navPersonalArea">📋 האזור האישי</button>
+        <button id="navAdmin" style="display:none">⚙️ חזרה לניהול</button>
+        <button id="navSignout" class="danger">🚪 התנתקות</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="admin-banner" id="previewBanner" style="display:none">
+    👁️ אתה צופה בממשק הלקוח כמנהל —
+    <a href="admin.html" id="previewBackAdmin">חזרה לניהול</a>
+  </div>
+
+  <div class="container">
+
+    <!-- ── קטלוג ── -->
+    <div class="view active" id="catalogView">
+      <div class="card">
+        <div class="tabs" id="collectionTabs"></div>
+        <div class="row search-row" style="flex-wrap:nowrap">
+          <input type="search" id="searchInput" class="grow" placeholder="🔍 חפש דגם…" inputmode="search">
+          <div class="view-toggle" id="viewToggle" role="group" aria-label="סוג התצוגה">
+            <button data-view="list" class="on" title="תצוגת רשימה" aria-label="תצוגת רשימה">☰</button>
+            <button data-view="grid" title="תצוגת רשת — תמונות גדולות" aria-label="תצוגת רשת">▦</button>
+          </div>
+        </div>
+        <div id="productList"></div>
+      </div>
+    </div>
+
+    <!-- ── האזור האישי ── -->
+    <div class="view" id="ordersView">
+      <div class="card">
+        <h2>👤 הפרטים שלי</h2>
+        <p class="muted small" style="margin-bottom:1rem">כאן אפשר לעדכן את פרטי החשבון.</p>
+        <div class="err-msg" id="accountProfileError"></div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="accountName">שם מלא <span class="req">*</span></label>
+            <input type="text" id="accountName" autocomplete="name" placeholder="השם שלך">
+          </div>
+          <div class="field">
+            <label for="accountBusiness">שם העסק / החנות</label>
+            <input type="text" id="accountBusiness" autocomplete="organization" placeholder="לדוגמה: פרקטי">
+          </div>
+          <div class="field">
+            <label for="accountPhone">טלפון <span class="req">*</span></label>
+            <input type="tel" id="accountPhone" autocomplete="tel" inputmode="tel" placeholder="050-0000000">
+          </div>
+          <div class="field">
+            <label for="accountCity">עיר</label>
+            <input type="text" id="accountCity" autocomplete="address-level2" placeholder="לדוגמה: בני ברק">
+          </div>
+        </div>
+
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn" id="accountProfileSave">שמירת פרטים</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>📋 האזור האישי <span class="grow"></span>
+          <button class="btn ghost sm" id="exportMyOrders">⬇️ ייצוא</button>
+        </h2>
+        <div class="sub-tabs" id="myOrderTabs">
+          <button data-mine="open" class="on">⏳ ממתינות <span class="n" id="cntOpen">0</span></button>
+          <button data-mine="history">📚 היסטוריה <span class="n" id="cntHistory">0</span></button>
+        </div>
+        <div id="myOrdersList"></div>
+      </div>
+    </div>
+
+    <!-- ── אישור ── -->
+    <div class="view" id="successView">
+      <div class="card center" style="padding:2.5rem 1.25rem">
+        <div style="font-size:3rem;margin-bottom:.8rem">✅</div>
+        <h2 class="plain">ההזמנה נשלחה בהצלחה!</h2>
+        <p class="muted" id="successMsg" style="margin:.6rem 0 .4rem"></p>
+        <p class="muted small" style="margin-bottom:1.5rem">שלחנו לך מייל אישור. ניצור קשר לתיאום אספקה.</p>
+        <div class="row" style="justify-content:center">
+          <button class="btn" id="successBack">חזרה לקטלוג</button>
+          <button class="btn ghost" id="successOrders">ההזמנות שלי</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── ניווט תחתון (נייד) ── -->
+  <nav class="bottom-nav" id="bottomNav">
+    <button class="bn-item active" data-nav="catalog">
+      <span class="ico">🛍️</span><span class="lbl">הזמנה</span>
+    </button>
+    <button class="bn-item" data-nav="cart">
+      <span class="ico">🛒<span class="bn-badge hidden" id="bnBadge">0</span></span><span class="lbl">הסל</span>
+    </button>
+    <button class="bn-item" data-nav="orders">
+      <span class="ico">📋</span><span class="lbl">אזור אישי</span>
+    </button>
+  </nav>
 </div>
 
-<div class="container">
-    <div id="loadingDiv" class="card loading">
-        <div class="spinner"></div>
-        <p>טוען נתונים מהמערכת...</p>
+<!-- ══════════ סל ══════════ -->
+<div class="overlay" id="cartOverlay">
+  <div class="panel">
+    <div class="panel-head">
+      <h3>🛒 סל ההזמנה</h3>
+      <div class="grow"></div>
+      <button class="btn ghost sm" id="clearCartBtn">רוקן</button>
+      <button class="icon-btn plain" id="closeCartBtn" aria-label="סגירה">✕</button>
     </div>
-
-    <div id="mainForm" style="display:none">
-        <div class="card">
-            <h2>👤 פרטי הלקוח</h2>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>שם מלא *</label>
-                    <input type="text" id="customerName" placeholder="הכנס שם מלא">
-                </div>
-                <div class="form-group">
-                    <label>טלפון</label>
-                    <input type="tel" id="customerPhone" placeholder="050-0000000">
-                </div>
-            </div>
-            <div class="form-group">
-                <label>אימייל</label>
-                <input type="email" id="customerEmail" placeholder="email@example.com">
-            </div>
-        </div>
-        
-        <div class="card">
-            <h2>📦 בחירת דגמים</h2>
-            
-            <!-- לשוניות מעבר קולקציה -->
-            <div class="tabs-container">
-                <button class="tab-btn active" id="tab-summer" onclick="switchTab('summer')">☀️ קולקציית קיץ</button>
-                <button class="tab-btn" id="tab-winter" onclick="switchTab('winter')">❄️ קולקציית חורף 26</button>
-            </div>
-            
-            <input type="text" class="search-box" id="searchInput" placeholder="🔍 חפש דגם..." oninput="filterProducts(this.value)">
-            <div id="productsContainer"></div>
-        </div>
+    <div class="panel-body" id="cartItems"></div>
+    <div class="panel-foot" id="cartFoot" style="display:none">
+      <div class="field">
+        <label for="orderNotes">הערות (אופציונלי)</label>
+        <textarea id="orderNotes" rows="2" placeholder="בקשות מיוחדות, תיאום אספקה…"></textarea>
+      </div>
+      <div class="row" style="justify-content:space-between;margin-bottom:.8rem">
+        <span class="bold" id="cartTotal"></span>
+      </div>
+      <div class="err-msg" id="cartError"></div>
+      <button class="btn block lg" id="submitOrderBtn">שלח הזמנה</button>
     </div>
-
-    <div id="successDiv" style="display:none" class="card">
-        <div style="text-align:center; padding:2rem;">
-            <div style="font-size:3rem; margin-bottom:1rem;">✅</div>
-            <h2 style="border:none; margin-bottom:0.5rem;">ההזמנה נשלחה בהצלחה!</h2>
-            <p style="color:var(--text-muted);">ניצור איתך קשר בהקדם לתיאום אספקה.</p>
-        </div>
-    </div>
+  </div>
 </div>
 
-<script>
-// קישור ה-Apps Script הקיים
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby24FZXFKPul4yarD_4AIidVcKxPvNXraWXsAyGNACYUG0KLOcS0tqRlSjWgPBk21g/exec';
+<!-- ══════════ פירוט הזמנה ══════════ -->
+<div class="overlay" id="orderOverlay">
+  <div class="panel">
+    <div class="panel-head">
+      <h3 id="myOrderTitle">הזמנה</h3>
+      <div class="grow"></div>
+      <button class="icon-btn plain" id="closeMyOrder" aria-label="סגירה">✕</button>
+    </div>
+    <div class="panel-body" id="myOrderBody"></div>
+    <div class="panel-foot" id="myOrderFoot"></div>
+  </div>
+</div>
 
-// הגדרת המיפוי בין הלשוניות לשמות הגליונות באקסל
-const TABS = {
-    summer: 'מלאי מחסן',
-    winter: 'קולקציית חורף 26'
-};
+<!-- ══════════ תמונה ══════════ -->
+<div class="modal" id="imgModal">
+  <div class="modal-box">
+    <button class="modal-x" id="closeImgModal" aria-label="סגירה">✕</button>
+    <img id="modalImg" src="" alt="">
+    <div class="center bold" id="modalTitle" style="margin-top:.7rem"></div>
+    <div class="center muted small" id="modalDesc"></div>
+  </div>
+</div>
 
-const sizeOrder = ["XS","S","M","L","XL","XXL","3XL","4XL","5XL"];
-
-// ניהול מצב האפליקציה (State)
-let currentTab = 'summer';       // לשונית פעילה כרגע (נפתח על קיץ כברירת מחדל)
-let tabCache = {};               // זיכרון מטמון כדי למנוע טעינות כפולות מיותרות
-let allProducts = {};            // רישום גלובלי של כל הדגמים שנטענו (לצורך הצגת הסל)
-let currentTabProducts = [];     // המוצרים שמוצגים בלשונית הנוכחית
-let cartState = {};              // שמירת המלאי שנבחר: { [model]: { [size]: qty } }
-
-window.onload = function() {
-    // מציג את הטופס הראשי וטוען את הלשונית הראשונה (קיץ)
-    document.getElementById('loadingDiv').style.display = 'none';
-    document.getElementById('mainForm').style.display = 'block';
-    loadTabProducts('summer');
-};
-
-// פונקציית טעינת מוצרים ללשונית ספציפית
-function loadTabProducts(tabKey) {
-    const container = document.getElementById('productsContainer');
-    
-    // אם המוצרים כבר קיימים במטמון - נרנדר אותם מיד
-    if (tabCache[tabKey]) {
-        currentTabProducts = tabCache[tabKey];
-        renderProducts();
-        return;
-    }
-    
-    // מציג ספינר טעינה ייעודי בתוך מכלול המוצרים
-    container.innerHTML = `
-        <div style="text-align: center; padding: 3rem;">
-            <div class="spinner"></div>
-            <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 10px;">טוען מוצרים מ${TABS[tabKey]}...</p>
-        </div>
-    `;
-    
-    const sheetName = TABS[tabKey];
-    fetch(`${APPS_SCRIPT_URL}?action=getProducts&sheetName=${encodeURIComponent(sheetName)}`)
-        .then(r => r.json())
-        .then(data => {
-            tabCache[tabKey] = data;
-            
-            // עדכון הרישום הגלובלי של המוצרים לשימוש עתידי בסל
-            data.forEach(p => {
-                allProducts[p.model] = p;
-            });
-            
-            if (currentTab === tabKey) {
-                currentTabProducts = data;
-                renderProducts();
-            }
-        })
-        .catch(err => {
-            container.innerHTML = `
-                <div style="text-align: center; padding: 2rem; color: var(--danger);">
-                    שגיאה בטעינת קולקציה: ${err.message}
-                    <br><button onclick="loadTabProducts('${tabKey}')" class="btn-serie" style="margin-top: 15px;">נסה שוב 🔄</button>
-                </div>
-            `;
-        });
-}
-
-// מעבר בין לשוניות
-function switchTab(tabKey) {
-    if (currentTab === tabKey) return;
-    
-    // עדכון העיצוב הויזואלי של הלשוניות
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-    document.getElementById(`tab-${tabKey}`).classList.add('active');
-    
-    currentTab = tabKey;
-    
-    // איפוס תיבת החיפוש
-    document.getElementById('searchInput').value = '';
-    
-    loadTabProducts(tabKey);
-}
-
-// רינדור רשימת המוצרים הפעילה
-function renderProducts() {
-    const container = document.getElementById('productsContainer');
-    if (!currentTabProducts.length) { 
-        container.innerHTML = '<p style="text-align:center;color:#999;padding:2rem;">אין דגמים זמינים כרגע בקולקציה זו</p>'; 
-        return; 
-    }
-    
-    container.innerHTML = currentTabProducts.map(p => {
-        const sortedSizes = sizeOrder.filter(s => p.stock[s] !== undefined);
-        return `
-        <div class="product-card" data-model="${p.model}">
-            <div class="product-image" onclick="openModal('${p.image || ''}', 'דגם ${p.model}')">
-                ${p.image ? `<img src="${p.image}" alt="דגם ${p.model}"><div class="zoom-icon">🔍</div>` : `<span style="font-size:2rem;color:#ccc;">📷</span>`}
-            </div>
-            <div class="product-body">
-                <div class="product-header">
-                    <div style="font-weight:700;">דגם ${p.model}</div>
-                    <button class="btn-serie" onclick="addSerie('${p.model}')">📦 הוסף סריה</button>
-                </div>
-                <div class="sizes-grid">
-                    ${sortedSizes.map(size => {
-                        const currentVal = (cartState[p.model] && cartState[p.model][size]) ? cartState[p.model][size] : 0;
-                        const hasValClass = currentVal > 0 ? 'has-value' : '';
-                        return `
-                        <div class="size-item">
-                            <span class="size-label">${size}</span>
-                            <input class="size-input ${hasValClass}" type="number" min="0" max="${p.stock[size]}" value="${currentVal}"
-                                id="size_${p.model}_${size}"
-                                oninput="validateAndSetInput(this, ${p.stock[size]}, '${p.model}', '${size}')">
-                        </div>
-                        `;
-                    }).join('')}
-                </div>
-            </div>
-        </div>`;
-    }).join('');
-}
-
-// עדכון ולידציה ושמירת מצב הסל
-function validateAndSetInput(input, max, modelId, size) {
-    let val = parseInt(input.value) || 0;
-    if (val < 0) val = 0;
-    if (val > max) val = max;
-    
-    input.value = val;
-    input.classList.toggle('has-value', val > 0);
-    
-    if (!cartState[modelId]) cartState[modelId] = {};
-    cartState[modelId][size] = val;
-    
-    // ניקוי ערכים ריקים מהאובייקט
-    if (val === 0) {
-        delete cartState[modelId][size];
-        if (Object.keys(cartState[modelId]).length === 0) {
-            delete cartState[modelId];
-        }
-    }
-    updateCartCount();
-}
-
-function openModal(imgUrl, title) {
-    if (!imgUrl) return;
-    document.getElementById('modalImg').src = imgUrl;
-    document.getElementById('modalTitle').textContent = title;
-    document.getElementById('modalOverlay').classList.add('active');
-}
-
-function closeModal() {
-    document.getElementById('modalOverlay').classList.remove('active');
-    document.getElementById('modalImg').src = '';
-}
-
-// הוספת סריה
-function addSerie(modelId) {
-    const product = allProducts[modelId];
-    if (!product) return;
-    
-    if (!cartState[modelId]) cartState[modelId] = {};
-    
-    Object.keys(product.stock).forEach(size => {
-        let currentVal = cartState[modelId][size] || 0;
-        if (currentVal < product.stock[size]) {
-            cartState[modelId][size] = currentVal + 1;
-        }
-    });
-    
-    renderProducts(); // עדכון ה-inputs המוצגים על המסך
-    updateCartCount();
-}
-
-// הסרת דגם שלם מהסל
-function removeModelFromCart(modelId) {
-    delete cartState[modelId];
-    renderProducts(); // עדכון שדה הערכים במידה והדגם מוצג כרגע בלשונית הפעילה
-    updateCartCount();
-    updateCartPanel();
-}
-
-// איפוס מוחלט של הסל
-function clearCart() {
-    cartState = {};
-    renderProducts();
-    updateCartCount();
-    updateCartPanel();
-}
-
-// עדכון מונה הסל הראשי בראש הדף
-function updateCartCount() {
-    let total = 0;
-    Object.values(cartState).forEach(sizes => {
-        Object.values(sizes).forEach(qty => {
-            total += qty;
-        });
-    });
-    
-    const badge = document.getElementById('cartBadge');
-    badge.textContent = total;
-    badge.classList.toggle('hidden', total === 0);
-}
-
-function openCart() { updateCartPanel(); document.getElementById('cartOverlay').classList.add('active'); }
-function closeCart() { document.getElementById('cartOverlay').classList.remove('active'); }
-
-// בניית פאנל הסל עם חלוקה נוחה
-function updateCartPanel() {
-    const container = document.getElementById('cartItems');
-    const footer = document.getElementById('cartFooter');
-    const totalEl = document.getElementById('cartTotal');
-    let html = '', totalQty = 0;
-    
-    Object.keys(cartState).forEach(modelId => {
-        const p = allProducts[modelId];
-        if (!p) return;
-        
-        let pQty = 0, sizesHtml = '';
-        const sortedSizes = sizeOrder.filter(s => cartState[modelId][s] !== undefined);
-        
-        sortedSizes.forEach(s => {
-            const val = cartState[modelId][s] || 0;
-            if (val > 0) {
-                pQty += val;
-                sizesHtml += `<span class="cart-size-tag">${s}: ${val}</span>`;
-            }
-        });
-        
-        if (pQty > 0) {
-            totalQty += pQty;
-            html += `
-            <div class="cart-item">
-                <div class="cart-item-image">
-                    ${p.image ? `<img src="${p.image}" alt="דגם ${p.model}">` : `<span style="font-size:1.2rem;color:#ccc;">📷</span>`}
-                </div>
-                <div class="cart-item-info">
-                    <div class="cart-item-title">דגם ${p.model}</div>
-                    <div style="display:flex; flex-wrap:wrap; gap:2px;">${sizesHtml}</div>
-                </div>
-                <button class="btn-remove" onclick="removeModelFromCart('${p.model}')" title="הסר פריט">🗑️</button>
-            </div>`;
-        }
-    });
-    
-    if (totalQty === 0) { 
-        container.innerHTML = '<p style="text-align:center;color:#94a3b8;padding:2rem;">הסל שלך ריק...</p>'; 
-        footer.style.display = 'none'; 
-    } else { 
-        container.innerHTML = html; 
-        totalEl.textContent = `סה"כ פריטים בסל: ${totalQty}`; 
-        footer.style.display = 'block'; 
-    }
-}
-
-function filterProducts(q) {
-    const query = q.toLowerCase().trim();
-    document.querySelectorAll('.product-card').forEach(c => {
-        c.style.display = c.getAttribute('data-model').toLowerCase().includes(query) ? 'flex' : 'none';
-    });
-}
-
-function submitOrder() {
-    const name = document.getElementById('customerName').value.trim();
-    const phone = document.getElementById('customerPhone').value.trim();
-    const email = document.getElementById('customerEmail').value.trim();
-    const errEl = document.getElementById('cartErrorMsg');
-    errEl.style.display = 'none';
-
-    if (!name) {
-        errEl.textContent = 'אנא מלא שם';
-        errEl.style.display = 'block';
-        return;
-    }
-
-    const orderItems = [];
-    Object.keys(cartState).forEach(modelId => {
-        orderItems.push({
-            model: modelId,
-            sizes: { ...cartState[modelId] }
-        });
-    });
-
-    if (!orderItems.length) {
-        errEl.textContent = 'אנא בחר לפחות דגם אחד';
-        errEl.style.display = 'block';
-        return;
-    }
-
-    const btn = document.getElementById('submitBtn');
-    btn.disabled = true;
-    btn.textContent = 'שולח...';
-
-    fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        body: JSON.stringify({ 
-            action: 'submitOrder', 
-            customerName: name, 
-            customerPhone: phone, 
-            customerEmail: email, 
-            orderItems 
-        })
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.success) {
-            closeCart();        // סוגר את פאנל הסל
-            clearCart();        // מאפס לחלוטין את כל הכמויות של המוצרים בזיכרון
-            document.getElementById('mainForm').style.display = 'none';
-            document.getElementById('successDiv').style.display = 'block';
-        } else {
-            errEl.textContent = data.error || 'שגיאה בשליחה';
-            errEl.style.display = 'block';
-            btn.disabled = false;
-            btn.textContent = 'שלח הזמנה עכשיו';
-        }
-    })
-    .catch(err => {
-        errEl.textContent = 'שגיאה: ' + err.message;
-        errEl.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = 'שלח הזמנה עכשיו';
-    });
-}
-</script>
+<script src="config.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>
