@@ -12,7 +12,7 @@ import {
 const db = {
   collections: [], products: [], orders: [], customers: [],
   invoices: [], users: [], emails: [], settings: {},
-  returns: [], returnItems: [], orderNotes: {},
+  returns: [], returnItems: [], orderNotes: {}, futureCollections: [],
 };
 
 const filters = { from: '', to: '', collection: '', customer: '', status: '', model: '' };
@@ -60,7 +60,7 @@ function show(id) { ['denyScreen', 'adminScreen'].forEach((s) => $(s)?.classList
 async function loadAll() {
   $('headerSub').textContent = 'טוען…';
   try {
-    const [cols, prods, orders, customers, invoices, users, emails, settings, rets, retItems, notes] =
+    const [cols, prods, orders, customers, invoices, users, emails, settings, rets, retItems, notes, futureCols] =
       await Promise.all([
         sb.from('collections').select('*').order('sort_order'),
         sb.from('products').select('*, inventory(size, qty), collections(name, slug, icon)').order('sort_order'),
@@ -75,9 +75,10 @@ async function loadAll() {
         sb.from('v_returns').select('*').order('return_date', { ascending: false }),
         sb.from('return_items').select('*'),
         sb.from('order_admin_notes').select('*'),
+        sb.from('future_order_collections').select('*'),
       ]);
 
-    for (const r of [cols, prods, orders, customers, invoices, users, emails, settings, rets, retItems, notes]) {
+    for (const r of [cols, prods, orders, customers, invoices, users, emails, settings, rets, retItems, notes, futureCols]) {
       if (r.error) throw r.error;
     }
 
@@ -96,12 +97,13 @@ async function loadAll() {
     db.returns   = rets.data || [];
     db.returnItems = retItems.data || [];
     db.orderNotes  = Object.fromEntries((notes.data || []).map((n) => [n.order_id, n.notes || '']));
+    db.futureCollections = futureCols.data || [];
 
     fillFilterOptions();
 
-    const pending    = db.orders.filter((o) => o.status === 'pending').length;
+    const pending    = db.orders.filter((o) => o.status === 'pending' && !o.future_order_at).length;
     const openReturn = db.returns.filter((r) => r.status === 'pending').length;
-    $('cntOrders').textContent = pending || db.orders.length;
+    $('cntOrders').textContent = pending;
     $('cntReturns').textContent = openReturn;
     $('headerSub').textContent =
       `${fmtNum(db.orders.length)} הזמנות · ${pending} ממתינות · ${openReturn} חזרות · ${fmtNum(db.products.length)} דגמים`;
@@ -202,7 +204,9 @@ const isWaitingForInvoice = (o) =>
 // כרטיס "דורש טיפול" — משימות פתוחות בלבד, בראש הדשבורד.
 function renderActionCard() {
   const live    = db.orders.filter((o) => !isArchived(o));
-  const pending = live.filter((o) => o.status === 'pending');
+  const pending = live
+    .filter((o) => o.status === 'pending' && !o.future_order_at)
+    .sort((a, b) => Number(b.pending_position || 0) - Number(a.pending_position || 0));
   const toInv   = db.orders.filter(isWaitingForInvoice);
   const openRet = db.returns.filter((r) => r.status === 'pending');
   const box = $('pendingList');
@@ -285,7 +289,7 @@ function renderDash() {
   const cost    = money.reduce((a, i) => a + lineCost(i), 0);
   const from    = profitStart();
   const moneyFoot = from ? `מ-${fmtDate(from, false)}` : 'כל התקופה';
-  const pending = orders.filter((o) => o.status === 'pending' && !isArchived(o)).length;
+  const pending = orders.filter((o) => o.status === 'pending' && !o.future_order_at && !isArchived(o)).length;
   const waitingForInvoice = db.orders.filter(isWaitingForInvoice).length;
   const unpaid  = db.invoices.filter((v) => v.status === 'unpaid').reduce((a, v) => a + Number(v.amount || 0), 0);
 
@@ -378,8 +382,9 @@ const hasInvoice = (orderId) => db.invoices.some((v) => v.order_id === orderId);
 const isArchived = (o) => !!o.archived_at;
 const canArchive = (o) => !o.archived_at && o.status !== 'pending';
 
-const ORDER_BUCKETS = [...STATUS_FLOW, 'archive', 'cancelled'];
+const ORDER_BUCKETS = ['pending', 'future', ...STATUS_FLOW.slice(1), 'archive', 'cancelled'];
 const BUCKET_META = {
+  future:  { label: 'הזמנות לעונה הבאה', short: 'עונה הבאה', icon: '📅', color: 'blue' },
   archive: { label: 'ארכיון', short: 'ארכיון', icon: '🗄️', color: 'gray' },
 };
 const bucketMeta = (k) => ORDER_STATUS[k] || BUCKET_META[k];
@@ -662,7 +667,40 @@ function inBucket(o, bucket) {
   if (o.status === 'cancelled') return bucket === 'cancelled';
   if (bucket === 'archive') return isArchived(o);
   if (isArchived(o)) return false;
+  if (bucket === 'future') return o.status === 'pending' && !!o.future_order_at;
+  if (bucket === 'pending') return o.status === 'pending' && !o.future_order_at;
   return o.status === bucket;
+}
+
+function futureFolderSettings(orderCount) {
+  const selected = new Set(db.futureCollections.map((x) => x.collection_id));
+  const collections = db.collections.filter((c) => c.is_active !== false);
+  return `
+    <div class="card" style="padding:1rem;margin-bottom:1rem">
+      <div class="row" style="align-items:flex-start">
+        <div class="grow">
+          <div class="bold">📅 הגדרה אוטומטית לפי קולקציות</div>
+          <div class="small muted" style="margin-top:.25rem">
+            הזמנה ממתינה שכל הפריטים בה שייכים לקולקציות המסומנות תועבר לכאן אוטומטית.
+            הזמנה מעורבת תישאר ברשימת הממתינות.
+          </div>
+        </div>
+        <button class="btn success sm" id="releaseFutureOrders" ${orderCount ? '' : 'disabled'}>
+          החזרת כל ההזמנות לממתינות
+        </button>
+      </div>
+      <div id="futureCollectionsBox" class="row" style="flex-wrap:wrap;gap:.8rem 1.2rem;margin:.9rem 0">
+        ${collections.length ? collections.map((c) => `
+          <label class="row small" style="gap:.4rem;cursor:pointer">
+            <input type="checkbox" data-future-collection="${c.id}" ${selected.has(c.id) ? 'checked' : ''}>
+            <span>${esc(c.icon || '')} ${esc(c.name)}</span>
+          </label>`).join('') : '<span class="small muted">אין קולקציות פעילות לבחירה.</span>'}
+      </div>
+      <div class="row">
+        <button class="btn sm" id="futureCollectionsSave">שמירת הקולקציות</button>
+        <span class="small muted">החזרת כל ההזמנות גם מנקה את בחירת הקולקציות, כדי שהן לא יועברו שוב אוטומטית.</span>
+      </div>
+    </div>`;
 }
 
 function renderOrders() {
@@ -683,10 +721,18 @@ function renderOrders() {
     renderOrders();
   };
 
-  const orders = all.filter((o) => inBucket(o, orderStatusTab));
+  let orders = all.filter((o) => inBucket(o, orderStatusTab));
+  if (orderStatusTab === 'pending') {
+    orders = orders.sort((a, b) =>
+      Number(b.pending_position || 0) - Number(a.pending_position || 0)
+      || new Date(b.created_at) - new Date(a.created_at));
+  } else if (orderStatusTab === 'future') {
+    orders = orders.sort((a, b) => new Date(b.future_order_at || b.created_at) - new Date(a.future_order_at || a.created_at));
+  }
 
   const meta = bucketMeta(orderStatusTab);
-  if (!orders.length) {
+  const futureView = orderStatusTab === 'future';
+  if (!orders.length && !futureView) {
     $('ordersTable').innerHTML =
       `<div class="empty"><div class="ico">${meta.icon}</div>
        אין הזמנות ב"${esc(meta.label)}"</div>`;
@@ -695,6 +741,7 @@ function renderOrders() {
 
   const archiveView   = orderStatusTab === 'archive';
   const cancelledView = orderStatusTab === 'cancelled';
+  const pendingView   = orderStatusTab === 'pending';
   const archivable    = orders.filter(canArchive);
 
   const rowActions = (o, next, nInv) => {
@@ -706,7 +753,15 @@ function renderOrders() {
       return `<button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>
               <button class="btn ghost sm" data-unarchive="${o.id}">↩️ מהארכיון</button>`;
     }
+    if (futureView) {
+      return `<button class="btn ghost sm" data-future-order="${o.id}|false">↩️ החזרה לממתינות</button>`;
+    }
     const parts = [];
+    if (pendingView) {
+      parts.push(`<button class="btn ghost sm" data-move-pending="${o.id}|up" title="הזזה למעלה">↑</button>`);
+      parts.push(`<button class="btn ghost sm" data-move-pending="${o.id}|down" title="הזזה למטה">↓</button>`);
+      parts.push(`<button class="btn ghost sm" data-future-order="${o.id}|true">📅 לעונה הבאה</button>`);
+    }
     if (next) {
       parts.push(`<button class="btn ${next === 'ready' ? 'success' : next === 'shipped' ? 'violet' : ''} sm"
         data-adv="${o.id}|${next}">${ORDER_STATUS[next].icon} ${esc(ORDER_STATUS[next].label)}</button>`);
@@ -717,10 +772,11 @@ function renderOrders() {
     if (canArchive(o)) {
       parts.push(`<button class="btn ghost sm" data-archive="${o.id}" title="העברה לארכיון">🗄️</button>`);
     }
-    return parts.join(' ');
+    return parts.length ? `<span class="row" style="gap:.3rem">${parts.join(' ')}</span>` : '';
   };
 
   $('ordersTable').innerHTML = `
+    ${futureView ? futureFolderSettings(orders.length) : ''}
     ${archiveView ? `<div class="note small">
        הזמנות שהמנהל העביר לארכיון. הטיפול בהן הסתיים — אפשר עדיין להעלות להן
        חשבונית, והן ייכללו ברווחיות אם תזיז אחורה את <b>תאריך תחילת החישוב</b>
@@ -731,7 +787,8 @@ function renderOrders() {
     ${archivable.length && !archiveView && !cancelledView ? `<div class="row" style="margin-bottom:.7rem">
        <button class="btn ghost sm" id="archiveBucket">🗄️ העבר את כל ${fmtNum(archivable.length)} ההזמנות בלשונית לארכיון</button>
      </div>` : ''}
-    <div class="table-wrap"><table class="responsive"><thead><tr>
+    ${!orders.length ? `<div class="empty"><div class="ico">${meta.icon}</div>
+       אין הזמנות ב"${esc(meta.label)}"</div>` : `<div class="table-wrap"><table class="responsive"><thead><tr>
       <th>#</th><th>לקוח</th><th>תאריך</th><th class="num">יח׳</th>
       <th class="num">סכום</th>${archiveView ? '<th>סטטוס</th>' : ''}<th class="num">🧾</th><th></th>
     </tr></thead><tbody>
@@ -753,7 +810,7 @@ function renderOrders() {
       ${td('חשבוניות', nInv ? `<span class="chip green">${nInv}</span>` : '—', 'num')}
       ${td('', rowActions(o, next, nInv), 'nowrap')}
     </tr>`; }).join('')}
-    </tbody></table></div>
+    </tbody></table></div>`}
     ${orders.length > 400 ? `<div class="small faint center" style="margin-top:.7rem">
       מוצגות 400 מתוך ${fmtNum(orders.length)} — צמצם את הסינון או ייצא</div>` : ''}`;
 
@@ -767,7 +824,24 @@ function renderOrders() {
     } catch (err) { toast(friendlyError(err), true); }
   });
 
+  on('futureCollectionsSave', 'click', saveFutureCollections);
+  on('releaseFutureOrders', 'click', releaseFutureOrders);
+
   $('ordersTable').onclick = async (e) => {
+    const future = e.target.closest('[data-future-order]');
+    if (future) {
+      e.stopPropagation();
+      const [id, enabled] = future.dataset.futureOrder.split('|');
+      await setOrderFuture(id, enabled === 'true');
+      return;
+    }
+    const move = e.target.closest('[data-move-pending]');
+    if (move) {
+      e.stopPropagation();
+      const [id, direction] = move.dataset.movePending.split('|');
+      await movePendingOrder(id, direction);
+      return;
+    }
     const adv = e.target.closest('[data-adv]');
     if (adv) {
       e.stopPropagation();
@@ -788,6 +862,60 @@ function renderOrders() {
     const row = e.target.closest('[data-order]');
     if (row) openOrder(row.dataset.order);
   };
+}
+
+async function saveFutureCollections() {
+  const button = $('futureCollectionsSave');
+  const ids = $$('#futureCollectionsBox [data-future-collection]:checked')
+    .map((input) => input.dataset.futureCollection);
+  if (button) button.disabled = true;
+  try {
+    const { data, error } = await sb.rpc('set_future_order_collections', { p_collection_ids: ids });
+    if (error) throw error;
+    toast(`נשמרו ${fmtNum(data?.collections ?? ids.length)} קולקציות · ${fmtNum(data?.future_orders ?? 0)} הזמנות בתיקייה`);
+    orderStatusTab = 'future';
+    await loadAll();
+  } catch (err) {
+    toast(friendlyError(err), true);
+    if (button) button.disabled = false;
+  }
+}
+
+async function releaseFutureOrders() {
+  const count = db.orders.filter((o) => o.status === 'pending' && o.future_order_at && !isArchived(o)).length;
+  if (!count) return;
+  if (!confirm(`להחזיר את כל ${count} ההזמנות לרשימת הממתינות?\n\nגם בחירת הקולקציות האוטומטית תנוקה.`)) return;
+  try {
+    const { data, error } = await sb.rpc('release_future_orders');
+    if (error) throw error;
+    toast(`${fmtNum(data?.released ?? count)} הזמנות חזרו לממתינות`);
+    orderStatusTab = 'pending';
+    await loadAll();
+  } catch (err) { toast(friendlyError(err), true); }
+}
+
+async function setOrderFuture(id, future) {
+  const order = db.orders.find((o) => o.id === id);
+  if (future && !confirm(`להעביר את הזמנה #${order?.order_number} לתיקיית "הזמנות לעונה הבאה"?`)) return;
+  try {
+    const { error } = await sb.rpc('set_order_future', { p_order_id: id, p_future: future });
+    if (error) throw error;
+    toast(future
+      ? `הזמנה #${order?.order_number} הועברה לעונה הבאה`
+      : `הזמנה #${order?.order_number} חזרה לממתינות`);
+    $('orderOverlay').classList.remove('active');
+    orderStatusTab = future ? 'future' : 'pending';
+    await loadAll();
+  } catch (err) { toast(friendlyError(err), true); }
+}
+
+async function movePendingOrder(id, direction) {
+  try {
+    const { data, error } = await sb.rpc('move_pending_order', { p_order_id: id, p_direction: direction });
+    if (error) throw error;
+    if (!data?.moved) toast(direction === 'up' ? 'ההזמנה כבר בראש הרשימה' : 'ההזמנה כבר בסוף הרשימה');
+    await loadAll();
+  } catch (err) { toast(friendlyError(err), true); }
 }
 
 // ============================================================
@@ -866,6 +994,7 @@ function openOrder(id) {
     .sort((a, b) => a.model.localeCompare(b.model, 'he') || sortSizes(a.size, b.size));
   const invs = db.invoices.filter((v) => v.order_id === o.id);
   const editable = o.status === 'pending' && !o.stock_applied;
+  const isFuture = o.status === 'pending' && !!o.future_order_at;
   // ההנחה נקבעת רק כשידוע מה באמת יוצא ללקוח
   const canDiscount = ['ready', 'shipped', 'paid'].includes(o.status);
   // הוזמן מול סופק — רלוונטי רק אם המנהל שינה כמויות לפני השליחה
@@ -876,6 +1005,7 @@ function openOrder(id) {
   $('orderPanelBody').innerHTML = `
     <div class="row" style="margin-bottom:.9rem">
       ${statusChip(ORDER_STATUS, o.status)}
+      ${isFuture ? `<span class="chip blue">📅 עונה הבאה${o.future_order_source === 'automatic' ? ' · אוטומטי' : ''}</span>` : ''}
       ${isArchived(o) ? '<span class="chip gray">🗄️ בארכיון</span>' : ''}
       <span class="muted small">${fmtDate(o.created_at)}</span>
     </div>
@@ -966,8 +1096,11 @@ function openOrder(id) {
   const next = ORDER_STATUS[o.status].next;
   $('orderPanelFoot').innerHTML = `
     <div class="row">
-      ${next ? `<button class="btn ${next === 'ready' ? 'success' : next === 'shipped' ? 'violet' : ''}"
+      ${next && !isFuture ? `<button class="btn ${next === 'ready' ? 'success' : next === 'shipped' ? 'violet' : ''}"
         data-adv-panel="${o.id}|${next}">${ORDER_STATUS[next].icon} ${esc(ORDER_STATUS[next].label)}</button>` : ''}
+      ${o.status === 'pending' ? (isFuture
+        ? `<button class="btn ghost sm" data-future-panel="${o.id}|false">↩️ החזרה לממתינות</button>`
+        : `<button class="btn ghost sm" data-future-panel="${o.id}|true">📅 לעונה הבאה</button>`) : ''}
       ${canArchive(o) ? `<button class="btn ghost sm" data-archive-panel="${o.id}">🗄️ לארכיון</button>` : ''}
       ${isArchived(o) ? `<button class="btn ghost sm" data-unarchive-panel="${o.id}">↩️ מהארכיון</button>` : ''}
       <button class="btn ghost sm" data-export-order="${o.id}">⬇️ ייצוא</button>
@@ -3504,6 +3637,12 @@ function wire() {
     if (adv) {
       const [id, st] = adv.dataset.advPanel.split('|');
       await advanceOrder(id, st);
+      return;
+    }
+    const futurePanel = e.target.closest('[data-future-panel]');
+    if (futurePanel) {
+      const [id, enabled] = futurePanel.dataset.futurePanel.split('|');
+      await setOrderFuture(id, enabled === 'true');
       return;
     }
     const delItem = e.target.closest('[data-del-item]');
