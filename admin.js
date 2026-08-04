@@ -1031,8 +1031,6 @@ function renderAdminOrderItems(groups, editable, anyShort) {
               </div>
               <span class="admin-order-size-price">${price > 0
                 ? `${fmtMoney(price)} · ${fmtMoney(line.qty * price)}` : 'ללא מחיר'}</span>
-              ${editable ? `<button class="btn danger sm admin-order-size-delete" data-del-item="${line.id}"
-                title="מחיקת מידה ${esc(line.size)}" aria-label="מחיקת דגם ${esc(line.model)} מידה ${esc(line.size)}">🗑️</button>` : ''}
             </div>`;
           }).join('')}
         </div>
@@ -1110,7 +1108,7 @@ function openOrder(id) {
 
     <h4 class="bold" style="margin-bottom:.5rem">פריטים (${itemGroups.length} דגמים · ${lines.length} מידות)</h4>
     ${editable
-      ? '<div class="note small">✏️ ניתן לשנות כמויות ולמחוק שורות כל עוד ההזמנה ממתינה. אחרי סימון "מוכנה לאיסוף" המלאי יורד וההזמנה ננעלת.</div>'
+      ? '<div class="note small">✏️ ניתן לשנות כמויות כל עוד ההזמנה ממתינה. הזנת 0 מוחקת את המידה. אחרי סימון "מוכנה לאיסוף" המלאי יורד וההזמנה ננעלת.</div>'
       : '<div class="note small">🔒 ההזמנה נעולה לעריכה — המלאי כבר עודכן.</div>'}
     ${anyShort ? '<div class="note warn small">⚠️ בשורות המסומנות הכמות שסופקה שונה ממה שהלקוח הזמין. הלקוח רואה את שתי הכמויות באזור האישי.</div>' : ''}
 
@@ -1556,10 +1554,34 @@ function stockProducts() {
   });
 }
 
+function renderStockCollectionTabs() {
+  const box = $('stockCollectionTabs');
+  if (!box) return;
+  const selected = $('stockCollection').value;
+  const tabs = [
+    { id: '', name: 'כל הקולקציות', icon: '🗂️', count: db.products.length },
+    ...db.collections.map((c) => ({
+      id: c.id, name: c.name, icon: c.icon || '📁',
+      count: db.products.filter((p) => p.collection_id === c.id).length,
+    })),
+  ];
+  box.innerHTML = tabs.map((tab) => `
+    <button class="tab ${tab.id === selected ? 'active' : ''}" data-stock-collection="${tab.id}">
+      ${esc(tab.icon)} ${esc(tab.name)} <span class="tab-count">${fmtNum(tab.count)}</span>
+    </button>`).join('');
+  box.onclick = (e) => {
+    const button = e.target.closest('[data-stock-collection]');
+    if (!button) return;
+    $('stockCollection').value = button.dataset.stockCollection;
+    renderStock();
+  };
+}
+
 function renderStock() {
   const items = stockProducts();
   const box = $('stockList');
   $('sortHint').style.display = stockSortMode ? 'block' : 'none';
+  renderStockCollectionTabs();
 
   if (!items.length) {
     box.innerHTML = '<div class="empty"><div class="ico">📦</div>אין דגמים תואמים</div>';
@@ -1601,36 +1623,50 @@ function renderStock() {
     return;
   }
 
-  box.className = '';
+  box.className = 'stock-cards';
   const allPicked = items.length > 0 && items.every((p) => picked.has(p.id));
-  box.innerHTML = `<div class="table-wrap"><table class="responsive"><thead><tr>
-    <th class="pick"><input type="checkbox" id="pickAll" ${allPicked ? 'checked' : ''}
-      aria-label="בחירת כל הדגמים המוצגים"></th>
-    <th></th><th>דגם</th><th>קולקציה</th>
-    ${SIZES.map((s) => `<th class="num">${s}</th>`).join('')}
-    <th class="num">סה״כ</th><th class="num">עלות</th><th class="num">סיטונאי</th><th class="num">קמעונאי</th>
-    <th>מוצג</th><th></th></tr></thead><tbody>
-    ${items.map((p) => `<tr data-product="${p.id}">
-      ${td('בחירה', `<input type="checkbox" data-pick="${p.id}" ${picked.has(p.id) ? 'checked' : ''}
-             aria-label="בחירת דגם ${esc(p.model)}">`, 'pick')}
-      ${td('', p.image_url
-        ? `<img class="thumb" src="${esc(img(p.image_url, 80))}" alt="" loading="lazy" decoding="async">`
-        : '<div class="thumb img-ph">📷</div>')}
-      ${td('דגם', esc(p.model), 'bold')}
-      ${td('קולקציה', esc(p.collections?.name || ''), 'muted small')}
-      ${SIZES.map((s) => td(s,
-        `<input type="number" min="0" value="${p.stock[s] ?? ''}" placeholder="—"
-           data-stock="${p.id}|${s}" aria-label="דגם ${esc(p.model)} מידה ${s}"
-           style="width:60px;text-align:center;font-weight:700;min-height:40px">`, 'num')).join('')}
-      ${td('סה״כ', fmtNum(p.total), 'num bold')}
-      ${td('עלות', p.cost_price > 0 ? fmtMoney(p.cost_price) : '<span class="chip amber">חסר</span>', 'num')}
-      ${td('סיטונאי', p.wholesale_price > 0 ? fmtMoney(p.wholesale_price) : '—', 'num')}
-      ${td('קמעונאי', p.retail_price > 0 ? fmtMoney(p.retail_price) : '—', 'num')}
-      ${td('מוצג', `<input type="checkbox" ${p.is_active ? 'checked' : ''} data-active="${p.id}"
-             aria-label="הצג דגם ${esc(p.model)}">`)}
-      ${td('', `<button class="btn ghost sm" data-edit="${p.id}">✏️ עריכה</button>`)}
-    </tr>`).join('')}
-    </tbody></table></div>`;
+  $('pickAllBtn').textContent = allPicked ? '☐ ניקוי הבחירה' : '☑️ בחר את כל המוצגים';
+  box.innerHTML = items.map((p) => `
+    <div class="product stock-product" data-product="${p.id}">
+      <div class="product-img" data-stock-zoom="${p.id}">
+        ${imgTag(p.image_url, 'דגם ' + p.model, 320)}
+        ${p.image_url ? '<span class="zoom" aria-hidden="true">🔍</span>' : ''}
+      </div>
+      <div class="product-body">
+        <div class="product-top stock-product-top">
+          <div>
+            <div class="product-title">דגם ${esc(p.model)}</div>
+            <div class="small muted">${esc(p.collections?.name || '')} · <b data-stock-total="${p.id}">${fmtNum(p.total)}</b> יח׳</div>
+          </div>
+          <div class="row stock-product-actions">
+            <label class="row small stock-pick" title="בחירת הדגם לעדכון מחירים">
+              <input type="checkbox" data-pick="${p.id}" ${picked.has(p.id) ? 'checked' : ''}
+                aria-label="בחירת דגם ${esc(p.model)}"> בחירה
+            </label>
+            <button class="btn ghost sm" data-edit="${p.id}">✏️ עריכה</button>
+          </div>
+        </div>
+        ${p.description ? `<div class="product-desc">${esc(p.description)}</div>` : ''}
+        <div class="sizes stock-sizes">
+          ${SIZES.map((s) => {
+            const qty = Number(p.stock[s] || 0);
+            return `<label class="size">
+              <span class="lbl">${esc(s)}</span>
+              <input type="number" inputmode="numeric" min="0" value="${qty}"
+                class="${qty > 0 ? 'on' : ''}" data-stock="${p.id}|${s}"
+                aria-label="דגם ${esc(p.model)} מידה ${esc(s)}">
+            </label>`;
+          }).join('')}
+        </div>
+        <div class="stock-product-meta">
+          <span><span class="muted">עלות:</span> ${p.cost_price > 0 ? fmtMoney(p.cost_price) : '<span class="chip amber">חסר</span>'}</span>
+          <span><span class="muted">סיטונאי:</span> ${p.wholesale_price > 0 ? fmtMoney(p.wholesale_price) : '—'}</span>
+          <span><span class="muted">קמעונאי:</span> ${p.retail_price > 0 ? fmtMoney(p.retail_price) : '—'}</span>
+          <label class="row small stock-active"><input type="checkbox" ${p.is_active ? 'checked' : ''}
+            data-active="${p.id}" aria-label="הצג דגם ${esc(p.model)}"> מוצג בקטלוג</label>
+        </div>
+      </div>
+    </div>`).join('');
 
   box.onchange = async (e) => {
     const pk = e.target.closest('[data-pick]');
@@ -1639,19 +1675,18 @@ function renderStock() {
       updateBulkBar();
       return;
     }
-    if (e.target.id === 'pickAll') {
-      for (const p of items) {
-        if (e.target.checked) picked.add(p.id); else picked.delete(p.id);
-      }
-      renderStock();
-      return;
-    }
     const st = e.target.closest('[data-stock]');
     if (st) { await saveStock(st); return; }
     const ac = e.target.closest('[data-active]');
     if (ac) await saveActive(ac);
   };
   box.onclick = (e) => {
+    const zoom = e.target.closest('[data-stock-zoom]');
+    if (zoom) {
+      const product = db.products.find((p) => p.id === zoom.dataset.stockZoom);
+      if (product?.image_url) modal(`דגם ${product.model}`, imgTag(product.image_url, `דגם ${product.model}`, 900));
+      return;
+    }
     const ed = e.target.closest('[data-edit]');
     if (ed) editProduct(ed.dataset.edit);
   };
@@ -1742,6 +1777,9 @@ async function saveStock(inp) {
     if (p) {
       p.stock[size] = qty;
       p.total = Object.values(p.stock).reduce((a, b) => a + b, 0);
+      inp.classList.toggle('on', qty > 0);
+      const total = document.querySelector(`[data-stock-total="${pid}"]`);
+      if (total) total.textContent = fmtNum(p.total);
     }
     toast(`דגם ${p?.model} ${size} → ${qty}`);
   } catch (err) {
