@@ -564,7 +564,6 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   width: 54px; min-height: 36px; height: 36px;
   padding: .2rem; text-align: center; font-weight: 800;
 }
-.admin-order-size-price { color: var(--muted); font-size: .72rem; white-space: nowrap; }
 
 @media (max-width: 520px) {
   .admin-order-model {
@@ -575,7 +574,6 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   .admin-order-model-name { font-size: .86rem; }
   .admin-order-size { gap: .3rem; padding: .25rem .3rem; }
   .admin-order-size-label { min-width: 34px; height: 34px; }
-  .admin-order-size-price { flex-basis: 100%; padding-inline-start: .15rem; }
 }
 
 /* ── מלאי בכרטיסים זהים לקטלוג הלקוח ───────────────────── */

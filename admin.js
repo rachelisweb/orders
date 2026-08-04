@@ -1017,7 +1017,6 @@ function renderAdminOrderItems(groups, editable, anyShort) {
           ${group.lines.map((line) => {
             const ordered = line.qty_ordered ?? line.qty;
             const short = ordered !== line.qty;
-            const price = Number(line.unit_price || 0);
             return `<div class="admin-order-size ${short ? 'short' : ''}">
               <span class="admin-order-size-label">${esc(line.size)}</span>
               <div class="admin-order-size-qty">
@@ -1029,8 +1028,6 @@ function renderAdminOrderItems(groups, editable, anyShort) {
                      </label>`
                   : `<b>${anyShort ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
               </div>
-              <span class="admin-order-size-price">${price > 0
-                ? `${fmtMoney(price)} · ${fmtMoney(line.qty * price)}` : 'ללא מחיר'}</span>
             </div>`;
           }).join('')}
         </div>
