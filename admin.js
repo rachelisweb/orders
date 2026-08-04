@@ -1022,10 +1022,8 @@ function renderAdminOrderItems(groups, editable, anyShort) {
               <div class="admin-order-size-qty">
                 ${anyShort ? `<span class="small ${short ? 'qty-diff' : 'muted'}">הוזמן ${fmtNum(ordered)}</span>` : ''}
                 ${editable
-                  ? `<label class="small muted">${anyShort ? 'סופק' : 'כמות'}
-                       <input type="number" min="0" value="${line.qty}" data-item="${line.id}"
-                         aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">
-                     </label>`
+                  ? `<input type="number" min="0" value="${line.qty}" data-item="${line.id}"
+                       aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">`
                   : `<b>${anyShort ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
               </div>
             </div>`;
