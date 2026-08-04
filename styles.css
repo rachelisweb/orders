@@ -697,14 +697,18 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   bottom: calc(var(--nav-h) + var(--safe-b) + 1rem);
   left: 50%;
   transform: translate(-50%, 200%);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
   background: var(--primary); color: #fff;
   padding: .7rem 1.2rem; border-radius: 999px;
   font-weight: 700; font-size: .9rem;
   box-shadow: var(--shadow-lg);
-  z-index: 500; transition: transform .25s ease;
+  z-index: 500; transition: transform .25s ease, opacity .2s ease;
   max-width: calc(100vw - 2rem); text-align: center;
 }
-.toast.show { transform: translate(-50%, 0); }
+.toast:empty { display: none; }
+.toast.show { transform: translate(-50%, 0); visibility: visible; opacity: 1; }
 .toast.err { background: var(--danger); }
 
 /* ── תפריט חשבון ──────────────────────────────────────── */
