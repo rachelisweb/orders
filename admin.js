@@ -2768,7 +2768,7 @@ function renderSettings() {
   const small = 'min-height:38px;padding:.2rem .4rem;font-size:.85rem';
   $('usersTable').innerHTML = db.users.length
     ? `<div class="table-wrap"><table class="responsive"><thead><tr>
-        <th>שם</th><th>אימייל</th><th>תפקיד</th><th>לקוח</th><th>נרשם</th></tr></thead><tbody>
+        <th>שם</th><th>אימייל</th><th>תפקיד</th><th>לקוח</th><th>נרשם</th><th></th></tr></thead><tbody>
       ${db.users.map((u) => {
         const me = u.id === state.user?.id;
         return `<tr>
@@ -2786,6 +2786,8 @@ function renderSettings() {
              ${db.customers.map((c) => `<option value="${c.id}" ${u.customer_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
            </select>`)}
         ${td('נרשם', fmtDate(u.created_at, false), 'small nowrap')}
+        ${td('', me ? '<span class="faint small">—</span>'
+          : `<button class="btn danger sm" data-delete-user="${u.id}" title="מחיקת חשבון התחברות">🗑️ מחיקה</button>`, 'nowrap')}
       </tr>`; }).join('')}</tbody></table></div>`
     : '<div class="empty">אין משתמשים</div>';
 
@@ -2821,6 +2823,31 @@ function renderSettings() {
       toast(s.value ? 'המשתמש שויך' : 'השיוך הוסר');
       await loadAll();
     } catch (err) { toast(friendlyError(err), true); }
+  };
+
+  $('usersTable').onclick = async (e) => {
+    const button = e.target.closest('[data-delete-user]');
+    if (!button) return;
+    const user = db.users.find((u) => u.id === button.dataset.deleteUser);
+    if (!user) { toast('המשתמש לא נמצא', true); return; }
+
+    const display = user.full_name || user.email || 'המשתמש';
+    if (!confirm(`למחוק את חשבון ההתחברות של ${display}?\n\n`
+      + 'המשתמש לא יוכל להתחבר יותר. כרטיס הלקוח, ההזמנות, החשבוניות וכל ההיסטוריה יישמרו.\n\n'
+      + 'הפעולה אינה ניתנת לביטול.')) return;
+
+    button.disabled = true;
+    button.textContent = 'מוחק…';
+    try {
+      const { error } = await sb.rpc('delete_user_account', { p_user_id: user.id });
+      if (error) throw error;
+      toast(`חשבון ההתחברות של ${display} נמחק`);
+      await loadAll();
+    } catch (err) {
+      toast(friendlyError(err), true);
+      button.disabled = false;
+      button.textContent = '🗑️ מחיקה';
+    }
   };
 
   // ── כללי ──
