@@ -6,7 +6,7 @@ import {
   $, $$, on, esc, img, imgTag, toast, showError, fmtDate, fmtMoney, fmtNum, td, todayISO,
   friendlyError, loadProfile, sortSizes, statusChip, debounce, compressImage,
   makeSortable, exportXlsx, exportCsv, setCustomerPreview,
-  ORDER_STATUS, STATUS_FLOW, INVOICE_STATUS, RETURN_STATUS,
+  ORDER_STATUS, STATUS_FLOW, RETURN_STATUS,
 } from './lib.js';
 
 const db = {
@@ -19,6 +19,8 @@ const filters = { from: '', to: '', collection: '', customer: '', status: '', mo
 
 let activeTab = 'dash';
 let orderStatusTab = 'pending';
+let archiveSearch = '';
+let archiveVisible = 10;
 let returnStatusTab = 'pending';
 let stockSortMode = false;
 const picked = new Set();     // דגמים מסומנים לעדכון מחירים מרובה
@@ -27,11 +29,27 @@ let newOrderCustomerHighlight = -1;
 let newOrderCollection = null;
 let newOrderCart = {};
 let newOrderSubmitting = false;
+const LOCAL_REVIEW = new URLSearchParams(location.search).get('review') === '1';
+const MOCK_REVIEW = LOCAL_REVIEW
+  && ['localhost', '127.0.0.1'].includes(location.hostname)
+  && new URLSearchParams(location.search).get('mock') === '1';
 
 // ============================================================
 // אתחול
 // ============================================================
 async function init() {
+  if (MOCK_REVIEW) {
+    state.user = { id: '00000000-0000-0000-0000-000000000001', email: 'review@local.test' };
+    state.profile = { full_name: 'בדיקה מקומית', email: 'review@local.test', role: 'admin' };
+    state.isAdmin = true;
+    $('whoName').textContent = 'בדיקה מקומית';
+    $('whoMail').textContent = 'נתוני דמה בלבד';
+    show('adminScreen');
+    $('localReviewBanner').hidden = false;
+    wire();
+    loadReviewFixtures();
+    return;
+  }
   if (!IS_CONFIGURED) { deny('חסרים פרטי החיבור ב-config.js'); return; }
 
   // חזרה למסך הניהול מסיימת תמיד מצב תצוגת לקוח קודם.
@@ -46,10 +64,96 @@ async function init() {
   $('whoName').textContent = state.profile?.full_name || 'מנהל';
   $('whoMail').textContent = state.profile?.email || '';
   show('adminScreen');
+  if (LOCAL_REVIEW) $('localReviewBanner').hidden = false;
 
   wire();
   await loadAll();
 }
+
+function loadReviewFixtures() {
+  const customerA = {
+    id: '10000000-0000-0000-0000-000000000001', name: 'שמואל רובניץ', business_name: 'גן וורשא',
+    phone: '0528883053', email: 'customer@example.com', city: 'ירושלים', address: 'רחוב הדוגמה 12',
+    tax_id: '515555555', discount_pct: 10, price_at_cost: false, is_active: true,
+    orders_count: 16, total_units: 284, total_amount: 42860, open_balance: 1723.74,
+  };
+  const customerB = {
+    id: '10000000-0000-0000-0000-000000000002', name: 'יעל אסייג', business_name: 'בוטיק יעל',
+    phone: '0501234567', email: '', city: 'בני ברק', address: 'רבי עקיבא 10', tax_id: '204444444',
+    discount_pct: 0, price_at_cost: true, is_active: true,
+    orders_count: 8, total_units: 91, total_amount: 15320, open_balance: 0,
+  };
+  db.collections = [
+    { id: '20000000-0000-0000-0000-000000000001', name: 'קולקציית קיץ', slug: 'summer', icon: '☀️', is_active: true, sort_order: 1 },
+    { id: '20000000-0000-0000-0000-000000000002', name: 'קולקציית חורף', slug: 'winter', icon: '❄️', is_active: true, sort_order: 2 },
+  ];
+  db.products = [
+    { id: '30000000-0000-0000-0000-000000000001', model: '2413B', description: 'חולצת פסים', image_url: '', collection_id: db.collections[0].id, collections: db.collections[0], wholesale_price: 200, cost_price: 118, retail_price: 399, is_active: true, stock: { S: 4, M: 6, L: 8, XL: 5, XXL: 3 }, total: 26 },
+    { id: '30000000-0000-0000-0000-000000000002', model: '2420-1', description: 'שמלת מקסי מודפסת', image_url: '', collection_id: db.collections[1].id, collections: db.collections[1], wholesale_price: 260, cost_price: 145, retail_price: 520, is_active: true, stock: { S: 3, M: 5, L: 4, XL: 2, XXL: 1 }, total: 15 },
+    { id: '30000000-0000-0000-0000-000000000003', model: '4036A', description: 'סריג דק', image_url: '', collection_id: db.collections[1].id, collections: db.collections[1], wholesale_price: 213, cost_price: 126, retail_price: 426, is_active: true, stock: { M: 4, L: 6, XL: 3 }, total: 13 },
+  ];
+  const mkItems = (orderId, rows) => rows.map((r, index) => ({
+    id: Number(`${String(orderId).slice(-3)}${index + 1}`), order_id: orderId,
+    product_id: db.products.find((p) => p.model === r[0])?.id, model: r[0], size: r[1],
+    qty: r[2], qty_ordered: r[3] ?? r[2], unit_price: r[4],
+  }));
+  const mkOrder = (number, status, customer, rows, daysAgo, extra = {}) => {
+    const id = `40000000-0000-0000-0000-${String(number).padStart(12, '0')}`;
+    const items = mkItems(id, rows);
+    const subtotal = items.reduce((sum, x) => sum + x.qty * x.unit_price, 0);
+    const discountValue = Number(extra.discount_value || 0);
+    const discountAmount = extra.discount_type === 'pct' ? roundMoney(subtotal * discountValue / 100)
+      : extra.discount_type === 'amt' ? discountValue : 0;
+    return {
+      id, order_number: number, customer_id: customer.id, customers: customer,
+      contact_name: customer.name, phone: customer.phone, email: customer.email,
+      status, created_at: new Date(Date.now() - daysAgo * 86400000).toISOString(),
+      total_units: items.reduce((sum, x) => sum + x.qty, 0), subtotal_amount: subtotal,
+      discount_type: extra.discount_type || null, discount_value: discountValue,
+      discount_amount: discountAmount, total_amount: subtotal - discountAmount,
+      stock_applied: status !== 'pending', order_items: items, notes: extra.notes || '',
+      archived_at: extra.archived ? new Date(Date.now() - Math.max(daysAgo - 1, 0) * 86400000).toISOString() : null,
+      future_order_at: extra.future ? new Date().toISOString() : null,
+      future_order_source: extra.future ? 'manual' : null,
+      pending_position: number,
+      ...extra,
+    };
+  };
+  db.orders = [
+    mkOrder(121, 'pending', customerA, [['2413B', 'L', 1, 1, 200], ['2413B', 'XXL', 2, 2, 200], ['2420-1', 'M', 1, 1, 260]], 0),
+    mkOrder(120, 'ready', customerA, [['2413B', 'M', 2, 2, 200], ['2420-1', 'S', 1, 1, 260], ['4036A', 'L', 3, 3, 213]], 1, { discount_type: 'pct', discount_value: 10 }),
+    mkOrder(119, 'pending', customerB, [['2420-1', 'L', 2, 2, 145], ['4036A', 'XL', 1, 1, 126]], 2, { future: true, pricing_mode: 'cost' }),
+    mkOrder(118, 'shipped', customerA, [['2413B', 'S', 3, 3, 200]], 3, { archived: true }),
+    mkOrder(117, 'cancelled', customerB, [['4036A', 'M', 1, 1, 126]], 4),
+  ];
+  for (let i = 0; i < 23; i++) {
+    db.orders.push(mkOrder(116 - i, i % 2 ? 'ready' : 'shipped', i % 3 ? customerA : customerB,
+      [['2413B', i % 2 ? 'M' : 'L', 1 + (i % 3), 1 + (i % 3), i % 3 ? 200 : 118]], 5 + i,
+      { archived: true, pricing_mode: i % 3 ? 'wholesale' : 'cost' }));
+  }
+  db.customers = [customerA, customerB];
+  db.invoices = [{
+    id: '50000000-0000-0000-0000-000000000001', customer_id: customerA.id,
+    order_id: db.orders.find((o) => o.order_number === 118).id, invoice_number: '4214',
+    amount: 708, issued_at: '2026-08-05', status: 'active', source: 'icount',
+    file_path: 'review/invoice-4214.pdf', file_name: 'RACHELI S invoice 4214.pdf',
+  }];
+  db.users = [{ id: '60000000-0000-0000-0000-000000000001', customer_id: customerA.id, email: customerA.email }];
+  db.emails = [];
+  db.settings = { profit_start_date: '2026-08-01', brand_name: 'רחליס' };
+  db.returns = [];
+  db.returnItems = [];
+  db.orderNotes = {};
+  db.futureCollections = [{ collection_id: db.collections[1].id }];
+  fillFilterOptions();
+  const pending = db.orders.filter((o) => o.status === 'pending' && !o.future_order_at).length;
+  $('cntOrders').textContent = pending;
+  $('cntReturns').textContent = '0';
+  $('headerSub').textContent = `${fmtNum(db.orders.length)} הזמנות דמה · ${pending} ממתינות · ${fmtNum(db.products.length)} דגמים`;
+  renderActiveTab();
+}
+
+const roundMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
 
 function deny(msg) { $('denyMsg').textContent = msg; show('denyScreen'); }
 function show(id) { ['denyScreen', 'adminScreen'].forEach((s) => $(s)?.classList.toggle('active', s === id)); }
@@ -60,7 +164,7 @@ function show(id) { ['denyScreen', 'adminScreen'].forEach((s) => $(s)?.classList
 async function loadAll() {
   $('headerSub').textContent = 'טוען…';
   try {
-    const [cols, prods, orders, customers, invoices, users, emails, settings, rets, retItems, notes, futureCols] =
+    const [cols, prods, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols] =
       await Promise.all([
         sb.from('collections').select('*').order('sort_order'),
         sb.from('products').select('*, inventory(size, qty), collections(name, slug, icon)').order('sort_order'),
@@ -68,6 +172,7 @@ async function loadAll() {
           .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone)')
           .order('created_at', { ascending: false }).limit(3000),
         sb.from('v_customer_stats').select('*').order('name'),
+        sb.from('customers').select('*').order('name'),
         sb.from('invoices').select('*, customers(name), orders(order_number)').order('issued_at', { ascending: false }),
         sb.from('profiles').select('*, customers(name)').order('created_at', { ascending: false }),
         sb.from('notification_emails').select('*').order('email'),
@@ -78,7 +183,7 @@ async function loadAll() {
         sb.from('future_order_collections').select('*'),
       ]);
 
-    for (const r of [cols, prods, orders, customers, invoices, users, emails, settings, rets, retItems, notes, futureCols]) {
+    for (const r of [cols, prods, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols]) {
       if (r.error) throw r.error;
     }
 
@@ -89,7 +194,8 @@ async function loadAll() {
       total: (p.inventory || []).reduce((a, i) => a + i.qty, 0),
     }));
     db.orders    = orders.data || [];
-    db.customers = customers.data || [];
+    const customerStats = new Map((customers.data || []).map((c) => [c.id, c]));
+    db.customers = (customerDetails.data || []).map((c) => ({ ...customerStats.get(c.id), ...c }));
     db.invoices  = invoices.data || [];
     db.users     = users.data || [];
     db.emails    = emails.data || [];
@@ -228,7 +334,12 @@ function renderActionCard() {
             <div class="small muted">${fmtNum(o.total_units)} יח׳ · ${fmtDate(o.created_at, false)}${o.total_amount > 0 ? ' · ' + fmtMoney(o.total_amount) : ''}</div>
           </div>
           ${next === 'invoice'
-            ? `<button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>`
+            ? `<span class="row" style="gap:.35rem">
+                 ${o.status === 'ready' && !hasInvoice(o.id)
+                   ? `<button class="btn sm" data-generate-invoice="${o.id}">🧾 הפקה</button>` : ''}
+                 <button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>
+                 ${o.status === 'ready' ? `<button class="btn violet sm" data-adv="${o.id}|shipped">🚚 נשלחה</button>` : ''}
+               </span>`
             : `<button class="btn ${next === 'ready' ? 'success' : 'violet'} sm" data-adv="${o.id}|${next}">
                  ${ORDER_STATUS[next].icon} ${esc(ORDER_STATUS[next].label)}</button>`}
         </div>`).join('')}
@@ -266,7 +377,7 @@ function renderActionCard() {
     }
     const cr = e.target.closest('[data-credit]');
     if (cr) { e.stopPropagation(); await creditReturn(cr.dataset.credit); return; }
-    if (e.target.closest('[data-upload-inv]')) return;   // מטופל בהאזנה הכללית
+    if (e.target.closest('[data-upload-inv], [data-generate-invoice]')) return;   // מטופל בהאזנה הכללית
 
     const ret = e.target.closest('[data-return]');
     if (ret) { openReturn(ret.dataset.return); return; }
@@ -291,14 +402,12 @@ function renderDash() {
   const moneyFoot = from ? `מ-${fmtDate(from, false)}` : 'כל התקופה';
   const pending = orders.filter((o) => o.status === 'pending' && !o.future_order_at && !isArchived(o)).length;
   const waitingForInvoice = db.orders.filter(isWaitingForInvoice).length;
-  const unpaid  = db.invoices.filter((v) => v.status === 'unpaid').reduce((a, v) => a + Number(v.amount || 0), 0);
 
   $('kpis').innerHTML = [
     ['הזמנות ממתינות',          fmtNum(pending),           'ממתינות לאישור',                   pending ? 'warn' : 'green'],
     ['ממתינות להעלאת חשבונית',  fmtNum(waitingForInvoice), 'מוכנות או נשלחו, ללא ארכיון',      waitingForInvoice ? 'violet' : 'green'],
     ['מחזור',                   fmtMoney(revenue),         moneyFoot,                           'green'],
     ['רווח',                    fmtMoney(revenue - cost),  cost > 0 ? moneyFoot : 'חסרים מחירי עלות', cost > 0 ? 'green' : 'warn'],
-    ['חוב פתוח',                fmtMoney(unpaid),          'חשבוניות שלא שולמו',               unpaid > 0 ? 'red' : 'green'],
   ].map(([label, value, foot, cls]) => `
     <div class="kpi ${cls}">
       <div class="label">${esc(label)}</div>
@@ -379,10 +488,21 @@ function renderDash() {
 // הזמנה ממתינה היא משימה פתוחה, ולכן לא ניתנת לארכוב.
 // ============================================================
 const hasInvoice = (orderId) => db.invoices.some((v) => v.order_id === orderId);
+const latestInvoice = (orderId) => db.invoices
+  .filter((v) => v.order_id === orderId && v.status !== 'cancelled')
+  .sort((a, b) => new Date(b.issued_at || b.created_at) - new Date(a.issued_at || a.created_at))[0] || null;
+const invoiceButton = (orderId, label = '⬇️ הורדת חשבונית') => {
+  const inv = latestInvoice(orderId);
+  return inv
+    ? `<button class="btn ghost sm" data-dl="${esc(inv.file_path)}"
+         data-name="${esc(inv.file_name || `invoice-${inv.invoice_number || orderId}.pdf`)}">${label}</button>`
+    : `<button class="btn ghost sm" data-upload-inv="${orderId}">⬆️ העלאת חשבונית</button>`;
+};
 const isArchived = (o) => !!o.archived_at;
 const canArchive = (o) => !o.archived_at && o.status !== 'pending';
 
-const ORDER_BUCKETS = ['pending', 'future', ...STATUS_FLOW.slice(1), 'archive', 'cancelled'];
+// עונה הבאה יושבת לצד הארכיון, ולא לצד המשימות הממתינות.
+const ORDER_BUCKETS = ['pending', ...STATUS_FLOW.slice(1), 'archive', 'future', 'cancelled'];
 const BUCKET_META = {
   future:  { label: 'הזמנות לעונה הבאה', short: 'עונה הבאה', icon: '📅', color: 'blue' },
   archive: { label: 'ארכיון', short: 'ארכיון', icon: '🗄️', color: 'gray' },
@@ -718,6 +838,8 @@ function renderOrders() {
     const b = e.target.closest('[data-st]');
     if (!b) return;
     orderStatusTab = b.dataset.st;
+    archiveSearch = '';
+    archiveVisible = 10;
     renderOrders();
   };
 
@@ -728,11 +850,13 @@ function renderOrders() {
       || new Date(b.created_at) - new Date(a.created_at));
   } else if (orderStatusTab === 'future') {
     orders = orders.sort((a, b) => new Date(b.future_order_at || b.created_at) - new Date(a.future_order_at || a.created_at));
+  } else if (orderStatusTab === 'archive') {
+    orders = orders.sort((a, b) => new Date(b.archived_at || b.created_at) - new Date(a.archived_at || a.created_at));
   }
 
   const meta = bucketMeta(orderStatusTab);
   const futureView = orderStatusTab === 'future';
-  if (!orders.length && !futureView) {
+  if (!orders.length && !futureView && orderStatusTab !== 'archive') {
     $('ordersTable').innerHTML =
       `<div class="empty"><div class="ico">${meta.icon}</div>
        אין הזמנות ב"${esc(meta.label)}"</div>`;
@@ -744,13 +868,26 @@ function renderOrders() {
   const pendingView   = orderStatusTab === 'pending';
   const archivable    = orders.filter(canArchive);
 
+  if (archiveView && archiveSearch) {
+    const q = archiveSearch.trim().toLowerCase();
+    orders = orders.filter((o) => {
+      const iso = String(o.created_at || '').slice(0, 10);
+      const dmy = iso ? iso.split('-').reverse().join('.') : '';
+      return [o.order_number, o.contact_name, o.customers?.name, o.customers?.business_name, iso, dmy]
+        .some((v) => String(v || '').toLowerCase().includes(q));
+    });
+  }
+  const archiveTotal = orders.length;
+  const visibleOrders = archiveView ? orders.slice(0, archiveVisible) : orders.slice(0, 400);
+
   const rowActions = (o, next, nInv) => {
     if (cancelledView) {
       return `<button class="btn ghost sm" data-restore="${o.id}">↩️ שחזור</button>
               <button class="btn danger sm" data-del-order="${o.id}">🗑️ מחיקה</button>`;
     }
     if (archiveView) {
-      return `<button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>
+      return `${invoiceButton(o.id)}
+              ${o.status === 'shipped' ? `<button class="btn ghost sm" data-resend-shipped="${o.id}">✉️ שליחה מחדש</button>` : ''}
               <button class="btn ghost sm" data-unarchive="${o.id}">↩️ מהארכיון</button>`;
     }
     if (futureView) {
@@ -768,8 +905,11 @@ function renderOrders() {
     if (pendingView) {
       parts.push(`<button class="btn ghost sm future-order-btn" data-future-order="${o.id}|true">📅 לעונה הבאה</button>`);
     }
-    if (o.status === 'shipped' && !nInv) {
-      parts.push(`<button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>`);
+    if (o.status === 'ready') {
+      parts.push(`<button class="btn ghost sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>`);
+    }
+    if (['ready', 'shipped'].includes(o.status)) {
+      parts.push(invoiceButton(o.id, nInv ? '⬇️ חשבונית' : '⬆️ חשבונית'));
     }
     if (canArchive(o)) {
       parts.push(`<button class="btn ghost sm" data-archive="${o.id}" title="העברה לארכיון">🗄️</button>`);
@@ -779,10 +919,11 @@ function renderOrders() {
 
   $('ordersTable').innerHTML = `
     ${futureView ? futureFolderSettings(orders.length) : ''}
-    ${archiveView ? `<div class="note small">
-       הזמנות שהמנהל העביר לארכיון. הטיפול בהן הסתיים — אפשר עדיין להעלות להן
-       חשבונית, והן ייכללו ברווחיות אם תזיז אחורה את <b>תאריך תחילת החישוב</b>
-       בלשונית 💰 רווחיות.</div>` : ''}
+    ${archiveView ? `<div class="archive-tools">
+       <div class="note small">ההזמנות שסיימו טיפול. ניתן לפתוח ולהוריד חשבוניות גם מכאן.</div>
+       <input type="search" id="archiveSearch" value="${esc(archiveSearch)}"
+         placeholder="🔍 חיפוש לפי מספר הזמנה, שם לקוח או תאריך" aria-label="חיפוש בארכיון">
+     </div>` : ''}
     ${cancelledView ? `<div class="note small">
        <b>שחזור</b> מחזיר את ההזמנה למצב "ממתינה". <b>מחיקה</b> היא לצמיתות —
        החשבוניות יישמרו אבל יאבדו את השיוך להזמנה.</div>` : ''}
@@ -790,11 +931,11 @@ function renderOrders() {
        <button class="btn ghost sm" id="archiveBucket">🗄️ העבר את כל ${fmtNum(archivable.length)} ההזמנות בלשונית לארכיון</button>
      </div>` : ''}
     ${!orders.length ? `<div class="empty"><div class="ico">${meta.icon}</div>
-       אין הזמנות ב"${esc(meta.label)}"</div>` : `<div class="table-wrap"><table class="responsive"><thead><tr>
+       ${archiveSearch ? 'לא נמצאו הזמנות התואמות לחיפוש' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : `<div class="table-wrap"><table class="responsive"><thead><tr>
       <th>#</th><th>לקוח</th><th>תאריך</th><th class="num">יח׳</th>
       <th class="num">סכום</th>${archiveView ? '<th>סטטוס</th>' : ''}<th class="num">🧾</th><th></th>
     </tr></thead><tbody>
-    ${orders.slice(0, 400).map((o) => {
+    ${visibleOrders.map((o) => {
       const next = ORDER_STATUS[o.status].next;
       const nInv = db.invoices.filter((v) => v.order_id === o.id).length;
       const note = db.orderNotes[o.id];
@@ -813,8 +954,20 @@ function renderOrders() {
       ${td('', rowActions(o, next, nInv), 'nowrap')}
     </tr>`; }).join('')}
     </tbody></table></div>`}
-    ${orders.length > 400 ? `<div class="small faint center" style="margin-top:.7rem">
+    ${archiveView && archiveVisible < archiveTotal ? `<div class="center" style="margin-top:.8rem">
+      <button class="btn ghost sm" id="archiveMore">הצגת 10 הזמנות ישנות יותר</button>
+      <div class="small faint" style="margin-top:.35rem">מוצגות ${fmtNum(visibleOrders.length)} מתוך ${fmtNum(archiveTotal)}</div>
+    </div>` : ''}
+    ${!archiveView && orders.length > 400 ? `<div class="small faint center" style="margin-top:.7rem">
       מוצגות 400 מתוך ${fmtNum(orders.length)} — צמצם את הסינון או ייצא</div>` : ''}`;
+
+  on('archiveSearch', 'input', debounce((e) => {
+    archiveSearch = e.target.value;
+    archiveVisible = 10;
+    renderOrders();
+    $('archiveSearch')?.focus();
+  }, 180));
+  on('archiveMore', 'click', () => { archiveVisible += 10; renderOrders(); });
 
   on('archiveBucket', 'click', async () => {
     if (!confirm(`להעביר ${archivable.length} הזמנות לארכיון?\n\nאפשר להחזיר אותן משם בכל רגע.`)) return;
@@ -859,6 +1012,12 @@ function renderOrders() {
     if (rs) { e.stopPropagation(); await restoreOrder(rs.dataset.restore); return; }
     const dl = e.target.closest('[data-del-order]');
     if (dl) { e.stopPropagation(); await deleteOrder(dl.dataset.delOrder); return; }
+    const invDl = e.target.closest('[data-dl]');
+    if (invDl) { e.stopPropagation(); await downloadInvoice(invDl); return; }
+    const gen = e.target.closest('[data-generate-invoice]');
+    if (gen) { e.stopPropagation(); openIcountInvoicePreview(gen.dataset.generateInvoice); return; }
+    const resend = e.target.closest('[data-resend-shipped]');
+    if (resend) { e.stopPropagation(); await resendShipmentEmail(resend.dataset.resendShipped); return; }
     if (e.target.closest('[data-upload-inv]')) return;    // מטופל בהאזנה הכללית
 
     const row = e.target.closest('[data-order]');
@@ -973,9 +1132,14 @@ async function advanceOrder(id, status, skipConfirm = false) {
     if (error) throw error;
 
     if (data?.missing?.length) toast(`עודכן, אך ${data.missing.length} שורות לא נמצאו במלאי`, true);
-    else toast(`ההזמנה סומנה כ"${label}"`);
+    else toast(status === 'shipped' ? 'ההזמנה סומנה כנשלחה והועברה לארכיון' : `ההזמנה סומנה כ"${label}"`);
 
-    if (status === 'shipped') notifyOrder(id, 'shipped');
+    if (status === 'shipped') {
+      const mail = await notifyOrder(id, 'shipped');
+      if (mail?.error) toast(`ההזמנה נשמרה בארכיון, אך המייל לא נשלח: ${mail.error}`, true);
+      else if (mail?.warnings?.length) toast(mail.warnings.join(' · '), true);
+      else if (mail?.sent?.length) toast('מייל המשלוח נשלח ללקוח');
+    }
     $('orderOverlay').classList.remove('active');
     await loadAll();
   } catch (err) {
@@ -984,8 +1148,24 @@ async function advanceOrder(id, status, skipConfirm = false) {
 }
 
 async function notifyOrder(orderId, event) {
-  try { await sb.functions.invoke('order-email', { body: { order_id: orderId, event } }); }
-  catch (err) { console.warn('order-email failed', err); }
+  try {
+    const { data, error } = await sb.functions.invoke('order-email', { body: { order_id: orderId, event } });
+    if (error) throw error;
+    if (data?.ok === false) throw new Error(data.error || 'שליחת המייל נכשלה');
+    return data || { ok: true };
+  } catch (err) {
+    console.warn('order-email failed', err);
+    return { ok: false, error: friendlyError(err) };
+  }
+}
+
+async function resendShipmentEmail(orderId) {
+  const order = db.orders.find((o) => o.id === orderId);
+  if (!confirm(`לשלוח מחדש את מייל המשלוח להזמנה #${order?.order_number}?\n\nאם קיימת חשבונית היא תצורף למייל.`)) return;
+  const result = await notifyOrder(orderId, 'shipped');
+  if (result?.error) toast(`המייל לא נשלח: ${result.error}`, true);
+  else if (result?.warnings?.length && !result?.sent?.length) toast(result.warnings.join(' · '), true);
+  else toast(`מייל המשלוח נשלח${result?.warnings?.length ? ` · ${result.warnings.join(' · ')}` : ''}`);
 }
 
 function groupOrderItemsByModel(lines) {
@@ -1002,7 +1182,6 @@ function renderAdminOrderItems(groups, editable, anyShort) {
     ${groups.map((group) => {
       const product = productByModel(group.model);
       const units = group.lines.reduce((sum, line) => sum + Number(line.qty || 0), 0);
-      const total = group.lines.reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.unit_price || 0), 0);
       return `<div class="admin-order-model">
         <div class="admin-order-model-image">
           ${product?.image_url
@@ -1011,7 +1190,7 @@ function renderAdminOrderItems(groups, editable, anyShort) {
         </div>
         <div class="admin-order-model-name">
           <div class="bold">${esc(group.model)}</div>
-          <div class="small muted">${fmtNum(units)} יח׳${total > 0 ? ` · ${fmtMoney(total)}` : ''}</div>
+          <div class="small muted">${fmtNum(units)} יח׳</div>
         </div>
         <div class="admin-order-sizes">
           ${group.lines.map((line) => {
@@ -1045,7 +1224,7 @@ function openOrder(id) {
   const editable = o.status === 'pending' && !o.stock_applied;
   const isFuture = o.status === 'pending' && !!o.future_order_at;
   // ההנחה נקבעת רק כשידוע מה באמת יוצא ללקוח
-  const canDiscount = ['ready', 'shipped', 'paid'].includes(o.status);
+  const canDiscount = ['ready', 'shipped'].includes(o.status);
   // הוזמן מול סופק — רלוונטי רק אם המנהל שינה כמויות לפני השליחה
   const anyShort = lines.some((l) => (l.qty_ordered ?? l.qty) !== l.qty);
   const sub = Number(o.subtotal_amount || o.total_amount || 0);
@@ -1066,7 +1245,16 @@ function openOrder(id) {
         <div><span class="muted">טלפון:</span> ${o.phone ? `<a href="tel:${esc(o.phone)}">${esc(o.phone)}</a>` : '—'}</div>
         <div><span class="muted">מייל:</span> ${o.email ? `<a href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : '—'}</div>
         <div><span class="muted">יחידות:</span> <b>${fmtNum(o.total_units)}</b></div>
-        <div><span class="muted">לתשלום:</span> <b>${o.total_amount > 0 ? fmtMoney(o.total_amount) : '—'}</b></div>
+        <div class="order-payment-summary">
+          <div><span class="muted">לתשלום:</span>
+            ${o.status === 'ready'
+              ? `<span class="inline-payable"><input type="number" id="payableTotal" min="0" max="${sub}" step="0.01"
+                    inputmode="decimal" value="${Number(o.total_amount || 0).toFixed(2)}" aria-label="סכום לתשלום">
+                   <button class="btn sm" id="payableSave">שמירה</button></span>`
+              : `<b>${o.total_amount > 0 ? fmtMoney(o.total_amount) : '—'}</b>`}
+          </div>
+          <div><span class="muted">סה״כ כולל מע״מ:</span> <b>${fmtMoney(Number(o.total_amount || 0) * 1.18)}</b></div>
+        </div>
       </div>
       ${o.discount_amount > 0 ? `<div class="small" style="margin-top:.5rem">
         <span class="muted">לפני הנחה:</span> ${fmtMoney(sub)} ·
@@ -1076,7 +1264,13 @@ function openOrder(id) {
       ${o.notes ? `<div class="small" style="margin-top:.5rem"><span class="muted">הערת לקוח:</span> ${esc(o.notes)}</div>` : ''}
     </div>
 
-    <h4 class="bold" style="margin-bottom:.5rem">💸 הנחה על ההזמנה</h4>
+    <div class="order-invoice-actions row">
+      ${o.status === 'ready' && !invs.length
+        ? `<button class="btn sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>` : ''}
+      ${invoiceButton(o.id)}
+    </div>
+
+    <h4 class="bold" style="margin-bottom:.5rem">💸 הנחה</h4>
     ${canDiscount ? `
       <div class="note small">הזן אחוז או סכום. ריק או 0 מבטל את ההנחה.</div>
       <div class="disc-row" style="margin-bottom:.4rem">
@@ -1112,13 +1306,13 @@ function openOrder(id) {
     <h4 class="bold" style="margin-bottom:.5rem">חשבוניות (${invs.length})</h4>
     ${invs.length
       ? invs.map((v) => `<div class="row small" style="padding:.4rem 0;border-bottom:1px solid var(--border)">
-          <span class="bold">${esc(v.invoice_number || v.file_name || '—')}</span>
-          ${statusChip(INVOICE_STATUS, v.status)}
+          <button class="invoice-file-link" data-dl="${esc(v.file_path)}"
+            data-name="${esc(v.file_name || `invoice-${v.invoice_number || o.order_number}.pdf`)}">
+            ${esc(v.invoice_number || v.file_name || '—')}</button>
           <span class="grow"></span>
           <span>${v.amount != null ? fmtMoney(v.amount) : ''}</span>
         </div>`).join('')
       : '<div class="small muted">טרם הועלתה חשבונית</div>'}
-    <button class="btn ghost sm" style="margin-top:.6rem" data-upload-inv="${o.id}">⬆️ העלאת חשבונית</button>
   `;
 
   const next = ORDER_STATUS[o.status].next;
@@ -1136,7 +1330,9 @@ function openOrder(id) {
       ${o.status === 'cancelled'
         ? `<button class="btn ghost sm" data-restore-panel="${o.id}">↩️ שחזור</button>
            <button class="btn danger sm" data-del-order-panel="${o.id}">🗑️ מחיקה</button>`
-        : `<button class="btn danger sm" data-adv-panel="${o.id}|cancelled">ביטול</button>`}
+        : (!isArchived(o) && ['pending', 'ready'].includes(o.status)
+          ? `<button class="btn danger sm" data-adv-panel="${o.id}|cancelled">ביטול</button>` : '')}
+      ${o.status === 'shipped' ? `<button class="btn ghost sm" data-resend-shipped="${o.id}">✉️ שליחת מייל מחדש</button>` : ''}
     </div>`;
 
   if (editable) {
@@ -1169,6 +1365,25 @@ function wireOrderPanel(o, sub) {
       if (activeTab === 'orders') renderOrders();
     } catch (err) { toast(friendlyError(err), true); }
     finally { btn.disabled = false; }
+  });
+
+  on('payableSave', 'click', async () => {
+    const desired = Number($('payableTotal').value);
+    if (!Number.isFinite(desired) || desired < 0 || desired > sub) {
+      toast(`הסכום חייב להיות בין 0 ל-${fmtMoney(sub)}`, true); return;
+    }
+    const btn = $('payableSave');
+    btn.disabled = true;
+    try {
+      const discount = Math.round((sub - desired) * 100) / 100;
+      const { data, error } = await sb.rpc('set_order_discount', {
+        p_order_id: o.id, p_type: discount > 0 ? 'amt' : null, p_value: discount,
+      });
+      if (error) throw error;
+      toast(`הסכום לתשלום נשמר: ${fmtMoney(data.total)}`);
+      await loadAll();
+      openOrder(o.id);
+    } catch (err) { toast(friendlyError(err), true); btn.disabled = false; }
   });
 
   const seg = $('discSeg');
@@ -1229,6 +1444,15 @@ async function editItem(itemId, qty, orderId) {
     });
     if (error) throw error;
     toast(qty > 0 ? 'הכמות עודכנה' : 'השורה נמחקה');
+
+    // תגובה מיידית גם לפני הטעינה החוזרת: 0 מעלים את חלונית המידה.
+    if (qty <= 0) {
+      const input = document.querySelector(`[data-item="${CSS.escape(String(itemId))}"]`);
+      const size = input?.closest('.admin-order-size');
+      const model = input?.closest('.admin-order-model');
+      size?.remove();
+      if (model && !model.querySelector('.admin-order-size')) model.remove();
+    }
 
     await loadAll();
     if (data?.lines_left > 0) openOrder(orderId);
@@ -1459,22 +1683,20 @@ function renderProfit() {
 
   const items   = profitItems();
   const revenue = items.reduce((a, i) => a + lineNet(i), 0);
-  const gross   = items.reduce((a, i) => a + lineGross(i), 0);
   const cost    = items.reduce((a, i) => a + lineCost(i), 0);
   const profit  = revenue - cost;
   const margin  = revenue > 0 ? (profit / revenue * 100) : 0;
   const units   = items.reduce((a, i) => a + i.qty, 0);
-  const discounts = gross - revenue;
 
   $('profitKpis').innerHTML = [
-    ['מחזור', fmtMoney(revenue), discounts > 0 ? `אחרי ${fmtMoney(discounts)} הנחות` : 'לפי סיטונאי', 'accent'],
+    ['מחזור', fmtMoney(revenue), '', 'accent'],
     ['עלות',  fmtMoney(cost),    noCost ? 'חלקי' : 'מלא', 'warn'],
     ['רווח',  fmtMoney(profit),  `${margin.toFixed(1)}% מרווח`, profit > 0 ? 'green' : 'red'],
-    ['יחידות', fmtNum(units),    `${fmtNum(items.length)} שורות`, 'accent'],
+    ['יחידות', fmtNum(units),    '', 'accent'],
   ].map(([l, v, f, c]) => `<div class="kpi ${c}">
       <div class="label">${esc(l)}</div>
       <div class="value ${String(v).length > 8 ? 'sm' : ''}">${esc(v)}</div>
-      <div class="foot">${esc(f)}</div></div>`).join('');
+      ${f ? `<div class="foot">${esc(f)}</div>` : ''}</div>`).join('');
 
   // ── חודשי ──
   const byMonth = new Map();
@@ -1505,7 +1727,7 @@ function renderProfit() {
         const pr = m.revenue - m.cost;
         const mg = m.revenue > 0 ? (pr / m.revenue * 100) : 0;
         return `<tr>
-          ${td('חודש', esc(monthName(m.month)), 'bold nowrap')}
+          ${td('חודש', `<button class="table-link" data-profit-month="${esc(m.month)}">${esc(monthName(m.month))}</button>`, 'bold nowrap')}
           ${td('הזמנות', m.orders.size, 'num')}
           ${td('יחידות', fmtNum(m.units), 'num')}
           ${td('מחזור', fmtMoney(m.revenue), 'num')}
@@ -1517,6 +1739,11 @@ function renderProfit() {
       }).join('')}
       </tbody></table></div>`
     : '<div class="empty">אין נתונים לסינון הנוכחי</div>';
+
+  $('profitMonthly').onclick = (e) => {
+    const month = e.target.closest('[data-profit-month]');
+    if (month) openProfitMonth(month.dataset.profitMonth, monthName(month.dataset.profitMonth));
+  };
 
   // ── לפי דגם ──
   const rows = demandMatrix(items).slice().sort((a, b) => b.profit - a.profit);
@@ -1534,6 +1761,54 @@ function renderProfit() {
       </tr>`).join('')}
       </tbody></table></div>`
     : '<div class="empty">אין נתונים</div>';
+}
+
+function openProfitMonth(monthKey, title) {
+  const groups = new Map();
+  for (const it of profitItems()) {
+    const d = new Date(it.order.created_at);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (key !== monthKey) continue;
+
+    const customerId = it.order.customer_id || '';
+    const groupKey = customerId || `unlinked:${it.order.contact_name || it.order.id}`;
+    const customer = db.customers.find((c) => c.id === customerId);
+    const row = groups.get(groupKey) || {
+      customerId,
+      name: customer?.name || it.order.contact_name || 'ללא שם',
+      business: customer?.business_name || '',
+      orders: new Set(), units: 0, revenue: 0,
+    };
+    row.orders.add(it.order.id);
+    row.units += Number(it.qty || 0);
+    row.revenue += lineNet(it);
+    groups.set(groupKey, row);
+  }
+
+  const rows = [...groups.values()].sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name, 'he'));
+  modal(`לקוחות שהזמינו ב${title}`, rows.length
+    ? `<div class="note small">לחיצה על לקוח תפתח את הכרטיס שלו ואת פירוט ההזמנות.</div>
+       <div class="table-wrap"><table class="responsive"><thead><tr>
+         <th>לקוח</th><th>עסק</th><th class="num">הזמנות</th><th class="num">יחידות</th><th class="num">מחזור</th>
+       </tr></thead><tbody>
+       ${rows.map((r) => `<tr ${r.customerId ? `class="clickable" data-month-customer="${r.customerId}"` : ''}>
+         ${td('לקוח', r.customerId
+           ? `<button class="table-link" data-month-customer="${r.customerId}">${esc(r.name)}</button>`
+           : esc(r.name), 'bold')}
+         ${td('עסק', esc(r.business || '—'))}
+         ${td('הזמנות', fmtNum(r.orders.size), 'num')}
+         ${td('יחידות', fmtNum(r.units), 'num')}
+         ${td('מחזור', fmtMoney(r.revenue), 'num')}
+       </tr>`).join('')}
+       </tbody></table></div>`
+    : '<div class="empty">אין לקוחות בחודש זה</div>', true);
+
+  $('modalBody').onclick = (e) => {
+    const customer = e.target.closest('[data-month-customer]');
+    if (!customer) return;
+    closeModal();
+    openCustomer(customer.dataset.monthCustomer);
+  };
 }
 
 // ============================================================
@@ -2429,7 +2704,7 @@ function renderCustomers() {
 
   $('customersTable').innerHTML = `<div class="table-wrap"><table class="responsive"><thead><tr>
     <th>שם</th><th>עסק</th><th>טלפון</th><th class="num">הזמנות</th>
-    <th class="num">יח׳</th><th class="num">מחזור</th><th class="num">חוב</th><th>אחרונה</th><th></th>
+    <th class="num">יח׳</th><th class="num">מחזור</th><th>אחרונה</th><th></th>
     </tr></thead><tbody>
     ${items.map((c) => `<tr class="clickable" data-customer="${c.id}">
       ${td('שם', esc(c.name), 'bold')}
@@ -2442,7 +2717,6 @@ function renderCustomers() {
       ${td('הזמנות', fmtNum(c.orders_count), 'num')}
       ${td('יחידות', fmtNum(c.total_units), 'num')}
       ${td('מחזור', c.total_amount > 0 ? fmtMoney(c.total_amount) : '—', 'num')}
-      ${td('חוב', c.open_balance > 0 ? `<span class="chip red">${fmtMoney(c.open_balance)}</span>` : '—', 'num')}
       ${td('אחרונה', c.last_order_at ? fmtDate(c.last_order_at, false) : '—', 'small nowrap')}
       ${td('', `${c.duplicate_status === 'pending' ? `
                 <button class="btn success sm" data-approve-duplicate="${c.id}" title="אישור ואיחוד">✅</button>
@@ -2615,12 +2889,10 @@ function openCustomer(id) {
     </div>` : c.duplicate_status === 'rejected'
       ? '<div class="note small">ההתאמה נבדקה וסומנה כשני עסקים נפרדים.</div>' : ''}
 
-    <div class="kpis" style="grid-template-columns:repeat(2,1fr)">
+    <div class="kpis" style="grid-template-columns:repeat(3,1fr)">
       <div class="kpi accent"><div class="label">הזמנות</div><div class="value">${fmtNum(c.orders_count)}</div></div>
       <div class="kpi accent"><div class="label">יחידות</div><div class="value">${fmtNum(c.total_units)}</div></div>
       <div class="kpi green"><div class="label">מחזור</div><div class="value sm">${fmtMoney(c.total_amount)}</div></div>
-      <div class="kpi ${c.open_balance > 0 ? 'red' : 'green'}">
-        <div class="label">חוב פתוח</div><div class="value sm">${fmtMoney(c.open_balance)}</div></div>
     </div>
 
     <div class="card" style="padding:.8rem">
@@ -2635,6 +2907,15 @@ function openCustomer(id) {
         ${users.length ? users.map((u) => esc(u.email)).join(', ')
                        : '<span class="chip amber">אין — הלקוח לא יכול להתחבר</span>'}
       </div>
+      <div class="customer-settings-summary">
+        <span class="bold">⚙️ הגדרות לקוח</span>
+        ${c.price_at_cost
+          ? '<span class="chip violet">מחיר עלות · ללא הנחה קבועה</span>'
+          : c.discount_pct > 0
+            ? `<span class="chip green">הנחה קבועה ${fmtNum(c.discount_pct)}%</span>`
+            : '<span class="chip gray">מחיר סיטונאי רגיל</span>'}
+        <button class="btn ghost sm" data-edit-cust="${c.id}">עריכת הגדרות</button>
+      </div>
     </div>
 
     <h4 class="bold" style="margin:.9rem 0 .5rem">דגמים מובילים</h4>
@@ -2645,7 +2926,7 @@ function openCustomer(id) {
     <h4 class="bold" style="margin:1rem 0 .5rem">הזמנות (${orders.length})</h4>
     ${orders.length ? `<div class="table-wrap"><table class="responsive"><thead><tr>
       <th>#</th><th>תאריך</th><th class="num">יח׳</th><th class="num">סכום</th><th>סטטוס</th></tr></thead><tbody>
-      ${orders.slice(0, 50).map((o) => `<tr>
+      ${orders.slice(0, 50).map((o) => `<tr class="clickable" data-customer-order="${o.id}">
         ${td('הזמנה', '#' + o.order_number, 'bold')}
         ${td('תאריך', fmtDate(o.created_at, false), 'small nowrap')}
         ${td('יחידות', fmtNum(o.total_units), 'num')}
@@ -2655,12 +2936,11 @@ function openCustomer(id) {
 
     <h4 class="bold" style="margin:1rem 0 .5rem">חשבוניות (${invs.length})</h4>
     ${invs.length ? `<div class="table-wrap"><table class="responsive"><thead><tr>
-      <th>מס׳</th><th>תאריך</th><th class="num">סכום</th><th>סטטוס</th><th></th></tr></thead><tbody>
+      <th>מס׳</th><th>תאריך</th><th class="num">סכום</th><th></th></tr></thead><tbody>
       ${invs.map((v) => `<tr>
         ${td('מס׳', esc(v.invoice_number || '—'), 'bold')}
         ${td('תאריך', fmtDate(v.issued_at, false), 'small nowrap')}
         ${td('סכום', v.amount != null ? fmtMoney(v.amount) : '—', 'num')}
-        ${td('סטטוס', statusChip(INVOICE_STATUS, v.status))}
         ${td('', `<button class="btn ghost sm" data-dl="${esc(v.file_path)}"
               data-name="${esc(v.file_name || 'invoice.pdf')}">⬇️</button>`)}
       </tr>`).join('')}</tbody></table></div>` : '<div class="small muted">אין חשבוניות</div>'}
@@ -2699,11 +2979,22 @@ function editCustomer(id) {
     <div class="grid-2">
       <div class="field"><label>כתובת</label><input type="text" id="uAddr" value="${esc(c?.address || '')}"></div>
       <div class="field"><label>הנחה קבועה (%)</label>
-        <input type="number" id="uDisc" min="0" max="100" step="0.5" inputmode="decimal" value="${c?.discount_pct ?? 0}"></div>
+        <input type="number" id="uDisc" min="0" max="100" step="0.5" inputmode="decimal" value="${c?.discount_pct ?? 0}"
+          ${c?.price_at_cost ? 'disabled' : ''}></div>
     </div>
+    <label class="setting-check">
+      <input type="checkbox" id="uPriceAtCost" ${c?.price_at_cost ? 'checked' : ''}>
+      <span><b>מחיר עלות</b><small>מחיר הלקוח יהיה מחיר העלות של הדגם, ללא ההנחה הקבועה.</small></span>
+    </label>
     <div class="field"><label>הערות</label><textarea id="uNotes" rows="2">${esc(c?.notes || '')}</textarea></div>
     <button class="btn block lg" id="uSave">שמירה</button>
   `);
+
+  on('uPriceAtCost', 'change', () => {
+    const enabled = $('uPriceAtCost').checked;
+    $('uDisc').disabled = enabled;
+    if (enabled) $('uDisc').value = '0';
+  });
 
   on('uSave', 'click', async () => {
     const name = $('uName').value.trim();
@@ -2716,7 +3007,8 @@ function editCustomer(id) {
       city:          $('uCity').value.trim()  || null,
       tax_id:        $('uTax').value.trim()   || null,
       address:       $('uAddr').value.trim()  || null,
-      discount_pct:  Number($('uDisc').value) || 0,
+      price_at_cost: $('uPriceAtCost').checked,
+      discount_pct:  $('uPriceAtCost').checked ? 0 : (Number($('uDisc').value) || 0),
       notes:         $('uNotes').value.trim() || null,
     };
     if (c && (rec.business_name || '').toLowerCase() !== (c.business_name || '').toLowerCase()) {
@@ -2741,12 +3033,128 @@ function editCustomer(id) {
 }
 
 // ============================================================
+// הפקת חשבונית iCount — תצוגה מקדימה מקומית ואישור מפורש
+// המחירים במערכת הם לפני מע"מ; iCount מוסיף 18%.
+// ============================================================
+function endOfMonthISO(date = new Date()) {
+  const last = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
+}
+
+function buildInvoicePreview(order) {
+  const grouped = new Map();
+  for (const item of order.order_items || []) {
+    if (Number(item.qty || 0) <= 0) continue;
+    // מחיר הוא חלק מהמפתח כדי ששתי שורות מאותו דגם במחירים שונים לא יאוחדו בטעות.
+    const key = `${item.model}\u0000${Number(item.unit_price || 0).toFixed(2)}`;
+    const product = productByModel(item.model);
+    if (!grouped.has(key)) grouped.set(key, {
+      model: item.model,
+      description: product?.description || '',
+      quantity: 0,
+      unit_price: Number(item.unit_price || 0),
+    });
+    grouped.get(key).quantity += Number(item.qty || 0);
+  }
+  const items = [...grouped.values()];
+  const subtotal = Math.round(items.reduce((sum, x) => sum + x.quantity * x.unit_price, 0) * 100) / 100;
+  const discount = Math.min(Math.max(Number(order.discount_amount || 0), 0), subtotal);
+  const beforeVat = Math.round((subtotal - discount) * 100) / 100;
+  const vat = Math.round(beforeVat * 18) / 100;
+  return { items, subtotal, discount, beforeVat, vat, total: Math.round((beforeVat + vat) * 100) / 100 };
+}
+
+function openIcountInvoicePreview(orderId) {
+  const order = db.orders.find((o) => o.id === orderId);
+  if (!order) return;
+  if (order.status !== 'ready') { toast('ניתן להפיק חשבונית רק להזמנה שמוכנה לאיסוף', true); return; }
+  if (latestInvoice(order.id)) { toast('כבר קיימת חשבונית להזמנה — ניתן להוריד אותה', true); return; }
+
+  const customer = db.customers.find((c) => c.id === order.customer_id);
+  const p = buildInvoicePreview(order);
+  const clientName = customer?.business_name || customer?.name || order.contact_name || '';
+  const date = todayISO();
+  const paydate = endOfMonthISO(new Date(`${date}T12:00:00`));
+  const blockers = [];
+  const warnings = [];
+  if (!clientName) blockers.push('חסר שם לקוח לחשבונית');
+  if (!p.items.length) blockers.push('אין פריטים שניתן לחייב');
+  if (p.items.some((x) => x.unit_price <= 0)) blockers.push('יש דגם שמחירו 0 — יש לתקן לפני ההפקה');
+  if (!customer?.tax_id) warnings.push('לא הוזן ח.פ / ע.מ בכרטיס הלקוח');
+  if (!customer?.address) warnings.push('לא הוזנה כתובת בכרטיס הלקוח');
+
+  modal(`תצוגה מקדימה — חשבונית להזמנה #${order.order_number}`, `
+    <div class="invoice-preview">
+      <div class="invoice-preview-head">
+        <div><span class="muted small">לקוח</span><b>${esc(clientName || '—')}</b></div>
+        <div><span class="muted small">ח.פ / ע.מ</span><b>${esc(customer?.tax_id || '—')}</b></div>
+        <div><span class="muted small">תאריך הפקה</span><b>${fmtDate(date, false)}</b></div>
+        <div><span class="muted small">לתשלום עד</span><b>${fmtDate(paydate, false)} · סוף החודש</b></div>
+      </div>
+      ${blockers.length ? `<div class="note danger-note small"><b>לא ניתן להפיק:</b> ${blockers.map(esc).join(' · ')}</div>` : ''}
+      ${warnings.length ? `<div class="note warn small"><b>יש לבדוק:</b> ${warnings.map(esc).join(' · ')}</div>` : ''}
+      <div class="table-wrap"><table><thead><tr>
+        <th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
+      </tr></thead><tbody>
+        ${p.items.map((x) => `<tr>
+          <td><b>${esc(x.model)}</b>${x.description ? `<div class="small muted">${esc(x.description)}</div>` : ''}</td>
+          <td class="num">${fmtNum(x.quantity)}</td>
+          <td class="num">${fmtMoney(x.unit_price)}</td>
+          <td class="num">${fmtMoney(x.quantity * x.unit_price)}</td>
+        </tr>`).join('')}
+      </tbody></table></div>
+      <div class="invoice-totals">
+        <span>סה״כ לפני הנחה</span><b>${fmtMoney(p.subtotal)}</b>
+        ${p.discount > 0 ? `<span>הנחה</span><b>−${fmtMoney(p.discount)}</b>` : ''}
+        <span>לפני מע״מ</span><b>${fmtMoney(p.beforeVat)}</b>
+        <span>מע״מ 18%</span><b>${fmtMoney(p.vat)}</b>
+        <span class="invoice-grand">סה״כ כולל מע״מ</span><b class="invoice-grand">${fmtMoney(p.total)}</b>
+      </div>
+      <div class="note small">iCount לא ישלח מייל. החשבונית תישמר בהזמנה ותצורף אוטומטית למייל כאשר ההזמנה תסומן כנשלחה.</div>
+      ${location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+        ? '<div class="note small">🧪 תצוגה מקומית: לא תופק חשבונית בלי פונקציית השרת והמפתח הסודי.</div>' : ''}
+      <label class="setting-check invoice-confirm">
+        <input type="checkbox" id="icountConfirm" ${blockers.length ? 'disabled' : ''}>
+        <span><b>בדקתי את הלקוח, הפריטים והסכומים</b><small>לאחר האישור תופק חשבונית מקור ב-iCount. לא ניתן למחוק אותה כאילו לא הופקה.</small></span>
+      </label>
+      <div class="err-msg" id="icountError"></div>
+      <button class="btn block lg" id="icountCreate" disabled>אישור והפקת חשבונית</button>
+    </div>
+  `, true);
+
+  on('icountConfirm', 'change', () => { $('icountCreate').disabled = !$('icountConfirm').checked || blockers.length > 0; });
+  on('icountCreate', 'click', async () => {
+    if (!$('icountConfirm').checked) return;
+    const btn = $('icountCreate');
+    const errorBox = $('icountError');
+    btn.disabled = true;
+    btn.textContent = 'מפיק ושומר… אין לסגור';
+    errorBox.classList.remove('show');
+    try {
+      const { data, error } = await sb.functions.invoke('icount-invoice', {
+        body: { action: 'create', order_id: order.id, doc_date: date, paydate },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'הפקת החשבונית נכשלה');
+      toast(`חשבונית ${data.invoice_number || ''} הופקה ונשמרה בהזמנה`);
+      closeModal();
+      await loadAll();
+      openOrder(order.id);
+    } catch (err) {
+      errorBox.textContent = friendlyError(err);
+      errorBox.classList.add('show');
+      btn.disabled = false;
+      btn.textContent = 'ניסיון חוזר';
+    }
+  });
+}
+
+// ============================================================
 // חשבוניות
 // ============================================================
 function filteredInvoices() {
   const cust = $('invCustomer').value;
-  const st   = $('invStatus').value;
-  return db.invoices.filter((v) => (!cust || v.customer_id === cust) && (!st || v.status === st));
+  return db.invoices.filter((v) => !cust || v.customer_id === cust);
 }
 
 function renderInvoices() {
@@ -2760,38 +3168,20 @@ function renderInvoices() {
 
   $('invoicesTable').innerHTML = `<div class="table-wrap"><table class="responsive"><thead><tr>
     <th>מס׳</th><th>לקוח</th><th>הזמנה</th><th>תאריך</th>
-    <th class="num">סכום</th><th>סטטוס</th><th></th></tr></thead><tbody>
+    <th class="num">סכום</th><th></th></tr></thead><tbody>
     ${items.map((v) => `<tr>
-      ${td('מס׳', esc(v.invoice_number || '—'), 'bold')}
+      ${td('מס׳', `${esc(v.invoice_number || '—')}${v.source === 'icount' ? ' <span class="chip violet">iCount</span>' : ''}`, 'bold')}
       ${td('לקוח', esc(v.customers?.name || '—'))}
       ${td('הזמנה', v.orders?.order_number ? '#' + v.orders.order_number : '—')}
       ${td('תאריך', fmtDate(v.issued_at, false), 'small nowrap')}
       ${td('סכום', v.amount != null ? fmtMoney(v.amount) : '—', 'num')}
-      ${td('סטטוס', `<select data-inv-status="${v.id}" style="min-height:38px;padding:.2rem .4rem;font-size:.85rem">
-          ${Object.entries(INVOICE_STATUS).map(([k, s]) =>
-            `<option value="${k}" ${v.status === k ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}
-        </select>`)}
       ${td('', `<button class="btn ghost sm" data-dl="${esc(v.file_path)}"
                 data-name="${esc(v.file_name || 'invoice.pdf')}">⬇️</button>
-                <button class="btn ghost sm" data-del-inv="${v.id}">🗑️</button>`, 'nowrap')}
+                ${v.source === 'icount'
+                  ? '<span class="chip gray" title="חשבונית מקור אינה נמחקת">🔒</span>'
+                  : `<button class="btn ghost sm" data-del-inv="${v.id}">🗑️</button>`}`, 'nowrap')}
     </tr>`).join('')}
     </tbody></table></div>`;
-
-  $('invoicesTable').onchange = async (e) => {
-    const s = e.target.closest('[data-inv-status]');
-    if (!s) return;
-    try {
-      const patch = { status: s.value };
-      if (s.value === 'paid') patch.paid_at = new Date().toISOString().slice(0, 10);
-      const { error } = await sb.from('invoices').update(patch).eq('id', s.dataset.invStatus);
-      if (error) throw error;
-      const v = db.invoices.find((x) => x.id === s.dataset.invStatus);
-      if (v) v.status = s.value;
-      toast('הסטטוס עודכן');
-    } catch (err) {
-      toast(friendlyError(err), true);
-    }
-  };
 
   $('invoicesTable').onclick = async (e) => {
     const del = e.target.closest('[data-del-inv]');
@@ -2818,6 +3208,10 @@ async function downloadInvoice(btn) {
 async function deleteInvoice(id) {
   const v = db.invoices.find((x) => x.id === id);
   if (!v) return;
+  if (v.source === 'icount') {
+    toast('חשבונית שהופקה ב-iCount אינה נמחקת מהמערכת. יש לבטל או לזכות אותה ב-iCount ולשמור תיעוד.', true);
+    return;
+  }
   if (!confirm(`למחוק את החשבונית ${v.invoice_number || v.file_name}?\nהקובץ יימחק גם מהאחסון.`)) return;
   try {
     const { error } = await sb.from('invoices').delete().eq('id', id);
@@ -2847,12 +3241,8 @@ function uploadInvoice(presetOrderId = null, presetCustomerId = null) {
       <div class="field"><label>סכום (₪)</label>
         <input type="number" id="ivAmount" min="0" step="0.01" inputmode="decimal" value="${order?.total_amount || ''}"></div>
     </div>
-    <div class="grid-2">
-      <div class="field"><label>תאריך</label>
-        <input type="date" id="ivDate" value="${new Date().toISOString().slice(0, 10)}"></div>
-      <div class="field"><label>סטטוס</label>
-        <select id="ivStatusNew"><option value="unpaid">לא שולמה</option><option value="paid">שולמה</option></select></div>
-    </div>
+    <div class="field"><label>תאריך</label>
+      <input type="date" id="ivDate" value="${new Date().toISOString().slice(0, 10)}"></div>
     <div class="field"><label>קובץ PDF <span class="req">*</span></label>
       <input type="file" id="ivFile" accept="application/pdf,image/*"></div>
     <div class="err-msg" id="ivError"></div>
@@ -2896,7 +3286,7 @@ function uploadInvoice(presetOrderId = null, presetCustomerId = null) {
         invoice_number: $('ivNumber').value.trim() || null,
         amount: $('ivAmount').value ? Number($('ivAmount').value) : null,
         issued_at: $('ivDate').value || new Date().toISOString().slice(0, 10),
-        status: $('ivStatusNew').value,
+        status: 'active',
         file_path: path, file_name: file.name,
         uploaded_by: state.user.id,
       });
@@ -3249,7 +3639,6 @@ function orderRowsSummary() {
     'סכום': Number(o.total_amount || 0),
     'מוכנה': o.ready_at ? fmtDate(o.ready_at, false) : '',
     'נשלחה': o.shipped_at ? fmtDate(o.shipped_at, false) : '',
-    'שולמה': o.paid_at ? fmtDate(o.paid_at, false) : '',
     'ארכיון': o.archived_at ? fmtDate(o.archived_at, false) : '',
     'הערות': o.notes || '',
     'הערת מנהל': db.orderNotes[o.id] || '',
@@ -3453,7 +3842,7 @@ async function exportCustomerHistory(id) {
   }
   const invs = db.invoices.filter((v) => v.customer_id === id).map((v) => ({
     'מס׳ חשבונית': v.invoice_number || '', 'תאריך': fmtDate(v.issued_at, false),
-    'סכום': Number(v.amount || 0), 'סטטוס': INVOICE_STATUS[v.status]?.label || v.status,
+    'סכום': Number(v.amount || 0),
   }));
   await exportXlsx(`לקוח_${(c?.name || '').replace(/\s+/g, '_')}`, [
     { name: 'הזמנות', rows }, { name: 'חשבוניות', rows: invs },
@@ -3463,13 +3852,15 @@ async function exportCustomerHistory(id) {
 // ============================================================
 // מודאל
 // ============================================================
-function modal(title, html) {
+function modal(title, html, wide = false) {
   $('modalTitle').textContent = title;
   $('modalBody').innerHTML = html;
+  $('modalBox').classList.toggle('wide-modal', wide);
   $('modal').classList.add('active');
 }
 function closeModal() {
   $('modal').classList.remove('active');
+  $('modalBox').classList.remove('wide-modal');
   $('modalBody').innerHTML = '';
   clearRetLines();     // משחרר תצוגות מקדימות של תמונות חזרה
 }
@@ -3500,6 +3891,31 @@ function switchTab(tab) {
 // חיווט
 // ============================================================
 function wire() {
+  if (LOCAL_REVIEW) {
+    const blockedClick = [
+      '[data-adv]', '[data-adv-panel]', '[data-future-order]', '[data-future-panel]',
+      '[data-move-pending]', '[data-archive]', '[data-archive-panel]', '[data-unarchive]',
+      '[data-unarchive-panel]', '[data-restore]', '[data-restore-panel]', '[data-del-order]',
+      '[data-del-order-panel]', '[data-del-return-panel]', '[data-credit]', '[data-credit-panel]',
+      '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
+      '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
+      '[data-resend-shipped]',
+      '#newOrderSubmit', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate',
+      '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
+      '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave',
+      '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
+    ].join(',');
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest(blockedClick)) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      toast('מצב בדיקה מקומית: הפעולה חסומה ולא שינתה נתונים', true);
+    }, true);
+    document.addEventListener('change', (e) => {
+      if (!e.target.matches('[data-item], [data-stock], [data-inv-status], [data-user-role], [data-role], [data-active], [data-mail]')) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      toast('מצב בדיקה מקומית: השינוי לא נשמר', true);
+    }, true);
+  }
   $('adminTabs').onclick = (e) => {
     const b = e.target.closest('[data-tab]');
     if (b) switchTab(b.dataset.tab);
@@ -3548,7 +3964,6 @@ function wire() {
   on('customerSearch', 'input', debounce(renderCustomers, 200));
   on('uploadInvoiceBtn', 'click', () => uploadInvoice());
   on('invCustomer', 'change', renderInvoices);
-  on('invStatus', 'change', renderInvoices);
   on('addEmailBtn', 'click', addEmail);
   on('testMailBtn', 'click', sendTestMail);
   on('testMailTo', 'keydown', (e) => { if (e.key === 'Enter') sendTestMail(); });
@@ -3675,7 +4090,7 @@ function wire() {
     await exportXlsx('לקוחות', [{ name: 'לקוחות', rows: db.customers.map((c) => ({
       'שם': c.name, 'עסק': c.business_name || '', 'טלפון': c.phone || '', 'מייל': c.email || '',
       'עיר': c.city || '', 'הזמנות': c.orders_count, 'יחידות': c.total_units,
-      'מחזור': Number(c.total_amount || 0), 'חוב פתוח': Number(c.open_balance || 0),
+      'מחזור': Number(c.total_amount || 0),
       'הזמנה אחרונה': c.last_order_at ? fmtDate(c.last_order_at, false) : '',
     })) }]);
     toast('הקובץ יורד…');
@@ -3684,7 +4099,7 @@ function wire() {
     const rows = filteredInvoices().map((v) => ({
       'מס׳ חשבונית': v.invoice_number || '', 'לקוח': v.customers?.name || '',
       'הזמנה': v.orders?.order_number || '', 'תאריך': fmtDate(v.issued_at, false),
-      'סכום': Number(v.amount || 0), 'סטטוס': INVOICE_STATUS[v.status]?.label || v.status,
+      'סכום': Number(v.amount || 0),
     }));
     if (!rows.length) { toast('אין חשבוניות לייצוא', true); return; }
     await exportXlsx('חשבוניות', [{ name: 'חשבוניות', rows }]);
@@ -3747,6 +4162,12 @@ function wire() {
     if (rp) { await restoreOrder(rp.dataset.restorePanel); return; }
     const dp = e.target.closest('[data-del-order-panel]');
     if (dp) { await deleteOrder(dp.dataset.delOrderPanel); return; }
+    const genInv = e.target.closest('[data-generate-invoice]');
+    if (genInv) { openIcountInvoicePreview(genInv.dataset.generateInvoice); return; }
+    const resendShipment = e.target.closest('[data-resend-shipped]');
+    if (resendShipment) { await resendShipmentEmail(resendShipment.dataset.resendShipped); return; }
+    const orderInvoice = e.target.closest('#orderPanelBody [data-dl]');
+    if (orderInvoice) { await downloadInvoice(orderInvoice); return; }
 
     // ── פעולות מתוך פאנל החזרה ──
     const cp = e.target.closest('[data-credit-panel]');
@@ -3762,6 +4183,12 @@ function wire() {
 
     const ecst = e.target.closest('[data-edit-cust]');
     if (ecst && ecst.closest('#customerPanelBody')) { editCustomer(ecst.dataset.editCust); return; }
+    const customerOrder = e.target.closest('[data-customer-order]');
+    if (customerOrder && customerOrder.closest('#customerPanelBody')) {
+      $('customerOverlay').classList.remove('active');
+      openOrder(customerOrder.dataset.customerOrder);
+      return;
+    }
     const adup = e.target.closest('[data-approve-duplicate]');
     if (adup && adup.closest('#customerPanelBody')) { await reviewDuplicateCustomer(adup.dataset.approveDuplicate, true); return; }
     const rdup = e.target.closest('[data-reject-duplicate]');

@@ -1,3 +1,18 @@
 # סביבת הפיתוח כוללת מיגרציות, פונקציות וקובצי מעבר עם נתונים פנימיים.
 # ל-GitHub Pages עולים רק קובצי האתר הסטטיים שבשורש המאגר.
 /v2/
+
+# רק הקוד החדש של iCount נשמר בגרסאות. יתר סביבת v2 כוללת קובצי
+# ייבוא עם שמות, טלפונים, מיילים והיסטוריית הזמנות אמיתית.
+!/v2/
+/v2/*
+!/v2/supabase/
+/v2/supabase/*
+!/v2/supabase/functions/
+/v2/supabase/functions/*
+!/v2/supabase/functions/icount-invoice/
+!/v2/supabase/functions/icount-invoice/**
+!/v2/supabase/migrations/
+/v2/supabase/migrations/*
+!/v2/supabase/migrations/20260806120000_order_archive_customer_pricing_icount.sql
+!/v2/supabase/migrations/20260806193000_remove_payment_status.sql

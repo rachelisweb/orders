@@ -25,18 +25,11 @@ export const SIZE_SORT = Object.fromEntries(SIZES.map((s, i) => [s, i]));
 export const ORDER_STATUS = {
   pending:   { label: 'ממתינה',        short: 'ממתינות',      color: 'amber',  icon: '⏳', next: 'ready'   },
   ready:     { label: 'מוכנה לאיסוף',  short: 'מוכנות',       color: 'blue',   icon: '📦', next: 'shipped' },
-  shipped:   { label: 'נשלחה',         short: 'נשלחו',        color: 'violet', icon: '🚚', next: 'paid'    },
-  paid:      { label: 'שולמה',         short: 'שולמו',        color: 'green',  icon: '✅', next: null      },
+  shipped:   { label: 'נשלחה',         short: 'נשלחו',        color: 'violet', icon: '🚚', next: null      },
   cancelled: { label: 'בוטלה',         short: 'בוטלו',        color: 'red',    icon: '✖',  next: null      },
 };
 
-export const STATUS_FLOW = ['pending', 'ready', 'shipped', 'paid'];
-
-export const INVOICE_STATUS = {
-  unpaid:    { label: 'לא שולמה', color: 'amber' },
-  paid:      { label: 'שולמה',    color: 'green' },
-  cancelled: { label: 'בוטלה',    color: 'red'   },
-};
+export const STATUS_FLOW = ['pending', 'ready', 'shipped'];
 
 // חזרה נקלטת כ-pending (המלאי כבר נכנס) וממתינה לזיכוי ללקוח.
 // אחרי הזיכוי היא יורדת לארכיון החזרות.

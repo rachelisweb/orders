@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css?v=20260804-6">
+<link rel="stylesheet" href="styles.css?v=20260806-3">
 </head>
 <body>
 
@@ -50,6 +50,9 @@
   </div>
 
   <div class="container wide">
+    <div class="local-review-banner" id="localReviewBanner" hidden>
+      🧪 מצב בדיקה מקומית — הנתונים נטענים לקריאה בלבד וכל פעולת שמירה, מחיקה, שליחה או הפקה חסומה.
+    </div>
     <div class="tabs" id="adminTabs">
       <button class="tab active" data-tab="dash">📊 דשבורד</button>
       <button class="tab" data-tab="orders">📋 הזמנות <span class="tab-count" id="cntOrders">0</span></button>
@@ -247,12 +250,6 @@
         </h2>
         <div class="row" style="margin-bottom:.8rem">
           <select id="invCustomer" style="max-width:250px"><option value="">כל הלקוחות</option></select>
-          <select id="invStatus" style="max-width:170px">
-            <option value="">כל הסטטוסים</option>
-            <option value="unpaid">לא שולמה</option>
-            <option value="paid">שולמה</option>
-            <option value="cancelled">בוטלה</option>
-          </select>
         </div>
         <div id="invoicesTable"></div>
       </div>
@@ -418,6 +415,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="admin.js?v=20260804-6"></script>
+<script type="module" src="admin.js?v=20260806-3"></script>
 </body>
 </html>
