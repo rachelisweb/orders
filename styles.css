@@ -399,6 +399,16 @@ td.num, th.num { text-align: center; font-variant-numeric: tabular-nums; }
 tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800; }
 
 @media (max-width: 780px) {
+  #adminTabs {
+    position: sticky;
+    top: var(--header-h);
+    z-index: 75;
+    margin-inline: -.5rem;
+    padding-inline: .5rem;
+    background: var(--bg);
+    scroll-snap-type: x proximity;
+  }
+  #adminTabs .tab { scroll-snap-align: center; }
   .responsive thead { display: none; }
   .responsive, .responsive tbody, .responsive tr, .responsive td { display: block; width: 100%; }
   .responsive tr {
@@ -423,8 +433,13 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   }
   .responsive td:empty { display: none; }
   .responsive td[data-label=""]::before { display: none; }
+  .responsive td[data-label=""] { flex-wrap: wrap; }
+  .responsive td > * { min-width: 0; }
   .responsive tfoot td { display: flex; }
   .table-wrap { border: none; background: none; overflow: visible; }
+  .modal { padding: .4rem; }
+  .modal-box { max-height: 96vh; max-height: 96dvh; }
+  .modal-x { width: var(--tap); height: var(--tap); }
 }
 
 /* ── תמונות ───────────────────────────────────────────── */
@@ -1073,6 +1088,38 @@ td.pick, th.pick { width: 38px; text-align: center; }
   .invoice-preview-head { grid-template-columns: 1fr; }
   .inline-payable { display: flex; margin: .35rem 0 0; }
   .inline-payable input { flex: 1; width: auto; }
+}
+
+@media (max-width: 520px) {
+  .container { padding-inline: .5rem; padding-top: .65rem; }
+  .card { padding: .75rem; margin-bottom: .75rem; }
+  .panel-body, .panel-foot { padding: .65rem; }
+
+  .act-row { align-items: stretch; flex-direction: column; }
+  .act-row > .row { width: 100%; flex-wrap: nowrap; }
+  .act-row > .row .btn {
+    flex: 1;
+    min-width: 0;
+    padding-inline: .4rem;
+  }
+
+  #tab-orders .card > h2 .grow,
+  #tab-demand .card > h2 .grow,
+  #tab-stock .card > h2 .grow,
+  #tab-customers .card > h2 .grow,
+  #tab-invoices .card > h2 .grow {
+    flex-basis: 100%;
+    height: 0;
+  }
+  #tab-orders .card > h2 .btn,
+  #tab-demand .card > h2 .btn,
+  #tab-stock .card > h2 .btn,
+  #tab-customers .card > h2 .btn,
+  #tab-invoices .card > h2 .btn {
+    flex: 1;
+    min-width: 0;
+    padding-inline: .4rem;
+  }
 }
 
 /* ── דסקטופ ───────────────────────────────────────────── */

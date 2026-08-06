@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css?v=20260806-3">
+<link rel="stylesheet" href="styles.css?v=20260806-4">
 </head>
 <body>
 
@@ -364,13 +364,16 @@
         </div>
         <div id="newOrderProductList"></div>
       </div>
+
+      <div class="card">
+        <div class="field" style="margin:0">
+          <label for="newOrderNotes">הערות להזמנה</label>
+          <textarea id="newOrderNotes" rows="2" placeholder="בקשות מיוחדות, תיאום אספקה…"></textarea>
+        </div>
+      </div>
     </div>
 
     <div class="panel-foot">
-      <div class="field">
-        <label for="newOrderNotes">הערות להזמנה</label>
-        <textarea id="newOrderNotes" rows="2" placeholder="בקשות מיוחדות, תיאום אספקה…"></textarea>
-      </div>
       <div class="row" style="justify-content:space-between;margin-bottom:.75rem">
         <span class="bold" id="newOrderSummary">הסל ריק</span>
       </div>
@@ -415,6 +418,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="admin.js?v=20260806-3"></script>
+<script type="module" src="admin.js?v=20260806-4"></script>
 </body>
 </html>

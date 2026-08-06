@@ -3885,6 +3885,10 @@ function switchTab(tab) {
   TABS.forEach((t) => $(`tab-${t}`)?.classList.toggle('active', t === tab));
   renderActiveTab();
   window.scrollTo(0, 0);
+  if (window.matchMedia('(max-width: 780px)').matches) {
+    const active = $(`#adminTabs .tab[data-tab="${tab}"]`);
+    requestAnimationFrame(() => active?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }));
+  }
 }
 
 // ============================================================
