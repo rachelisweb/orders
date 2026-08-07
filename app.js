@@ -467,16 +467,25 @@ function renderCart() {
   box.innerHTML = entries.map(([model, sizes]) => {
     const p = byModel[model];
     const qty = Object.values(sizes).reduce((a, b) => a + b, 0);
-    const tags = Object.keys(sizes).sort(sortSizes)
-      .map((s) => `<span class="tag">${esc(s)}: ${sizes[s]}</span>`).join('');
+    const sizeInputs = Object.keys(sizes).sort(sortSizes).map((s) => {
+      const current = Number(sizes[s] || 0);
+      const available = Number(p?.stock?.[s] || current);
+      return `<label class="size">
+        <span class="lbl">${esc(s)}</span>
+        <input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="${Math.max(available, current)}"
+               value="${current}" class="${current > 0 ? 'on' : ''}"
+               aria-label="דגם ${esc(model)} מידה ${esc(s)}"
+               data-m="${esc(model)}" data-s="${esc(s)}">
+      </label>`;
+    }).join('');
     return `<div class="cart-item">
       ${p?.image_url
         ? `<img class="thumb" src="${esc(img(p.image_url, 120))}" alt="" loading="lazy" decoding="async">`
         : '<div class="thumb img-ph">📷</div>'}
       <div class="info">
         <div class="title">דגם ${esc(model)}</div>
-        <div>${tags}</div>
-        <div class="muted small">${qty} יח׳</div>
+        <div class="sizes cart-sizes">${sizeInputs}</div>
+        <div class="muted small" data-cart-model-total="${esc(model)}">${qty} יח׳</div>
       </div>
       <button class="btn ghost sm" data-rm="${esc(model)}" aria-label="הסר דגם ${esc(model)}">🗑️</button>
     </div>`;
@@ -489,6 +498,20 @@ function renderCart() {
     renderCart();
     renderProducts();
     updateBadge();
+  };
+  box.oninput = (e) => {
+    const input = e.target.closest('input[data-m][data-s]');
+    if (!input) return;
+    setQty(input);
+    const modelQty = Object.values(state.cart[input.dataset.m] || {}).reduce((sum, value) => sum + value, 0);
+    const total = box.querySelector(`[data-cart-model-total="${CSS.escape(input.dataset.m)}"]`);
+    if (total) total.textContent = `${fmtNum(modelQty)} יח׳`;
+    $('cartTotal').textContent = `סה״כ ${fmtNum(cartUnits())} יחידות`;
+  };
+  box.onchange = (e) => {
+    if (!e.target.closest('input[data-m][data-s]')) return;
+    renderCart();
+    renderProducts();
   };
 
   $('cartTotal').textContent = `סה״כ ${fmtNum(cartUnits())} יחידות`;

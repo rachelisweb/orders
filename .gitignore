@@ -16,3 +16,4 @@
 /v2/supabase/migrations/*
 !/v2/supabase/migrations/20260806120000_order_archive_customer_pricing_icount.sql
 !/v2/supabase/migrations/20260806193000_remove_payment_status.sql
+!/v2/supabase/migrations/20260807090000_flexible_icount_invoices.sql

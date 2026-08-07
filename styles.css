@@ -648,6 +648,8 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
 }
 .cart-item .info { flex: 1; min-width: 0; }
 .cart-item .title { font-weight: 800; font-size: .92rem; margin-bottom: .22rem; }
+.cart-sizes { justify-content: flex-start; margin: .35rem 0; }
+.cart-sizes .size input { width: 52px; }
 
 /* ── פאנל צדדי ────────────────────────────────────────── */
 .overlay {
@@ -1030,6 +1032,19 @@ tr.short td, tr.short { background: #fffbeb; }
 .invoice-totals .invoice-grand { border-top: 1px solid var(--border-2); padding-top: .45rem; font-size: 1rem; }
 .danger-note { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
 .invoice-confirm { margin: 0; }
+.flex-invoice-line {
+  display: grid;
+  grid-template-columns: minmax(115px, .8fr) minmax(180px, 1.5fr) 90px 150px auto;
+  gap: .55rem;
+  align-items: end;
+  padding: .65rem;
+  margin-top: .55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+.flex-invoice-line .field { margin: 0; }
+.flex-line-remove { margin-bottom: 0; }
 
 /* ── חזרות ────────────────────────────────────────────── */
 .ret-line {
@@ -1086,6 +1101,9 @@ td.pick, th.pick { width: 38px; text-align: center; }
   .responsive td.pick { justify-content: flex-start; }
   .archive-tools { grid-template-columns: 1fr; }
   .invoice-preview-head { grid-template-columns: 1fr; }
+  .flex-invoice-line { grid-template-columns: 1fr 1fr; }
+  .flex-description-field { grid-column: 1 / -1; }
+  .flex-line-remove { grid-column: 1 / -1; width: 100%; }
   .inline-payable { display: flex; margin: .35rem 0 0; }
   .inline-payable input { flex: 1; width: auto; }
 }

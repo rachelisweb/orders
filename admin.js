@@ -29,6 +29,8 @@ let newOrderCustomerHighlight = -1;
 let newOrderCollection = null;
 let newOrderCart = {};
 let newOrderSubmitting = false;
+let flexibleInvoiceRequestId = null;
+let flexibleInvoicePreviewPayload = null;
 const LOCAL_REVIEW = new URLSearchParams(location.search).get('review') === '1';
 const MOCK_REVIEW = LOCAL_REVIEW
   && ['localhost', '127.0.0.1'].includes(location.hostname)
@@ -3152,6 +3154,278 @@ function openIcountInvoicePreview(orderId) {
 // ============================================================
 // חשבוניות
 // ============================================================
+const flexibleInvoiceCustomerLabel = (customer) => customer.business_name
+  ? `${customer.business_name} — ${customer.name}`
+  : customer.name;
+
+function renderFlexibleInvoiceCustomers(open = true) {
+  const search = $('flexInvoiceCustomerSearch');
+  const list = $('flexInvoiceCustomerList');
+  if (!search || !list) return;
+  const q = search.value.trim().toLowerCase();
+  const selected = $('flexInvoiceCustomerId').value;
+  const customers = db.customers
+    .filter((c) => c.is_active !== false)
+    .filter((c) => !q
+      || flexibleInvoiceCustomerLabel(c).toLowerCase().includes(q)
+      || (c.phone || '').includes(q)
+      || (c.email || '').toLowerCase().includes(q)
+      || (c.tax_id || '').includes(q))
+    .sort((a, b) => flexibleInvoiceCustomerLabel(a).localeCompare(flexibleInvoiceCustomerLabel(b), 'he'));
+  list.innerHTML = customers.length ? customers.map((customer) => `
+    <button type="button" class="customer-option ${customer.id === selected ? 'selected' : ''}"
+            role="option" data-flex-invoice-customer="${customer.id}">
+      <span class="customer-option-title">${esc(flexibleInvoiceCustomerLabel(customer))}</span>
+      <span class="customer-option-details">${esc([customer.phone, customer.email, customer.tax_id].filter(Boolean).join(' · '))}</span>
+    </button>`).join('') : '<div class="customer-option-empty">לא נמצאו לקוחות מתאימים</div>';
+  list.classList.toggle('open', open);
+  search.setAttribute('aria-expanded', String(open));
+}
+
+function selectFlexibleInvoiceCustomer(customerId) {
+  const customer = db.customers.find((c) => c.id === customerId);
+  if (!customer) return;
+  $('flexInvoiceCustomerId').value = customer.id;
+  $('flexInvoiceCustomerSearch').value = flexibleInvoiceCustomerLabel(customer);
+  $('flexInvoiceClientName').value = customer.business_name || customer.name || '';
+  $('flexInvoiceTaxId').value = customer.tax_id || '';
+  $('flexInvoiceEmail').value = customer.email || '';
+  $('flexInvoiceAddress').value = [customer.address, customer.city].filter(Boolean).join(', ');
+  $('flexInvoiceCustomerList').classList.remove('open');
+  $('flexInvoiceCustomerSearch').setAttribute('aria-expanded', 'false');
+  invalidateFlexibleInvoicePreview();
+}
+
+function flexibleInvoiceLineHtml(seed = {}) {
+  return `<div class="flex-invoice-line">
+    <div class="field flex-model-field"><label>דגם / מק״ט</label>
+      <input type="text" data-flex-model list="flexInvoiceModels" value="${esc(seed.sku || '')}" placeholder="לדוגמה 2420-1">
+    </div>
+    <div class="field flex-description-field"><label>פירוט הפריט</label>
+      <input type="text" data-flex-description value="${esc(seed.description || '')}" placeholder="תיאור שיופיע בחשבונית">
+    </div>
+    <div class="field"><label>כמות</label>
+      <input type="number" data-flex-quantity min="0.01" step="0.01" inputmode="decimal" value="${seed.quantity || 1}">
+    </div>
+    <div class="field"><label>מחיר ליחידה לפני מע״מ</label>
+      <input type="number" data-flex-unit-price min="0.01" step="0.01" inputmode="decimal" value="${seed.unitprice || ''}" placeholder="0.00">
+    </div>
+    <button type="button" class="btn danger sm flex-line-remove" data-flex-remove-line aria-label="הסרת פריט">🗑️</button>
+  </div>`;
+}
+
+function addFlexibleInvoiceLine(seed = {}) {
+  $('flexInvoiceLines').insertAdjacentHTML('beforeend', flexibleInvoiceLineHtml(seed));
+  invalidateFlexibleInvoicePreview();
+}
+
+function invalidateFlexibleInvoicePreview() {
+  flexibleInvoicePreviewPayload = null;
+  const preview = $('flexInvoicePreview');
+  if (preview) preview.innerHTML = '';
+}
+
+function collectFlexibleInvoice() {
+  const customerId = $('flexInvoiceCustomerId').value;
+  if (!customerId || !db.customers.some((c) => c.id === customerId)) throw new Error('יש לבחור לקוח מהרשימה');
+  const clientName = $('flexInvoiceClientName').value.trim();
+  if (!clientName) throw new Error('חסר שם לקוח לחשבונית');
+  const items = $$('#flexInvoiceLines .flex-invoice-line').map((row, index) => {
+    const sku = row.querySelector('[data-flex-model]').value.trim();
+    const description = row.querySelector('[data-flex-description]').value.trim();
+    const quantity = Number(row.querySelector('[data-flex-quantity]').value);
+    const unitprice = Number(row.querySelector('[data-flex-unit-price]').value);
+    if (!sku && !description) throw new Error(`חסר דגם או פירוט בפריט ${index + 1}`);
+    if (!(quantity > 0)) throw new Error(`הכמות בפריט ${index + 1} אינה תקינה`);
+    if (!(unitprice > 0)) throw new Error(`המחיר בפריט ${index + 1} אינו תקין`);
+    return { sku, description: description || sku, quantity, unitprice };
+  });
+  if (!items.length) throw new Error('יש להוסיף לפחות פריט אחד');
+  const subtotal = roundMoney(items.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
+  const discountValue = Math.max(0, Number($('flexInvoiceDiscount').value || 0));
+  const discountType = $('flexInvoiceDiscountType').value;
+  const discount = roundMoney(discountType === 'pct' ? subtotal * Math.min(discountValue, 100) / 100 : discountValue);
+  if (discount > subtotal) throw new Error('ההנחה גבוהה מסכום החשבונית');
+  const docDate = $('flexInvoiceDate').value;
+  const paydate = $('flexInvoicePaydate').value;
+  if (!docDate || !paydate || paydate < docDate) throw new Error('יש לבדוק את תאריך ההפקה ותאריך התשלום');
+  return {
+    request_id: flexibleInvoiceRequestId,
+    customer_id: customerId,
+    client_name: clientName,
+    vat_id: $('flexInvoiceTaxId').value.trim(),
+    email: $('flexInvoiceEmail').value.trim(),
+    address: $('flexInvoiceAddress').value.trim(),
+    doc_date: docDate,
+    paydate,
+    notes: $('flexInvoiceNotes').value.trim(),
+    items,
+    discount,
+  };
+}
+
+function renderFlexibleInvoicePreview(payload) {
+  const subtotal = roundMoney(payload.items.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
+  const beforeVat = roundMoney(subtotal - payload.discount);
+  const vat = roundMoney(beforeVat * 0.18);
+  const total = roundMoney(beforeVat + vat);
+  flexibleInvoicePreviewPayload = payload;
+  $('flexInvoicePreview').innerHTML = `
+    <div class="invoice-preview">
+      <div class="note small"><b>תצוגה מקדימה בלבד.</b> בשלב זה עדיין לא נוצרה חשבונית.</div>
+      <div class="invoice-preview-head">
+        <div><span class="muted small">לקוח</span><b>${esc(payload.client_name)}</b></div>
+        <div><span class="muted small">ח.פ / ע.מ</span><b>${esc(payload.vat_id || '—')}</b></div>
+        <div><span class="muted small">תאריך</span><b>${fmtDate(payload.doc_date, false)}</b></div>
+        <div><span class="muted small">לתשלום עד</span><b>${fmtDate(payload.paydate, false)}</b></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר</th><th class="num">סה״כ</th></tr></thead><tbody>
+        ${payload.items.map((item) => `<tr>
+          <td><b>${esc(item.sku || item.description)}</b>${item.sku && item.description !== item.sku ? `<div class="small muted">${esc(item.description)}</div>` : ''}</td>
+          <td class="num">${fmtNum(item.quantity)}</td><td class="num">${fmtMoney(item.unitprice)}</td>
+          <td class="num">${fmtMoney(item.quantity * item.unitprice)}</td>
+        </tr>`).join('')}
+      </tbody></table></div>
+      <div class="invoice-totals">
+        <span>סכום לפני הנחה</span><b>${fmtMoney(subtotal)}</b>
+        ${payload.discount ? `<span>הנחה</span><b>−${fmtMoney(payload.discount)}</b>` : ''}
+        <span>לפני מע״מ</span><b>${fmtMoney(beforeVat)}</b>
+        <span>מע״מ 18%</span><b>${fmtMoney(vat)}</b>
+        <span class="invoice-grand">סה״כ כולל מע״מ</span><b class="invoice-grand">${fmtMoney(total)}</b>
+      </div>
+      <div class="note small">iCount לא ישלח מייל. החשבונית תישמר בכרטיס הלקוח ותהיה זמינה במסך החשבוניות.</div>
+      ${LOCAL_REVIEW ? '<div class="note small">🧪 מצב בדיקה מקומית: ההפקה חסומה ולא תישלח בקשה ל־iCount.</div>' : ''}
+      <label class="setting-check invoice-confirm">
+        <input type="checkbox" id="flexInvoiceConfirm" ${LOCAL_REVIEW ? 'disabled' : ''}>
+        <span><b>בדקתי את הלקוח, הפריטים והסכומים</b><small>האישור הבא מפיק חשבונית מקור אמיתית ב־iCount.</small></span>
+      </label>
+      <div class="err-msg" id="flexInvoiceCreateError"></div>
+      <button class="btn block lg" id="flexInvoiceCreate" disabled>אישור והפקת חשבונית</button>
+    </div>`;
+  on('flexInvoiceConfirm', 'change', () => {
+    $('flexInvoiceCreate').disabled = LOCAL_REVIEW || !$('flexInvoiceConfirm').checked;
+  });
+  on('flexInvoiceCreate', 'click', createFlexibleInvoice);
+}
+
+async function createFlexibleInvoice() {
+  if (!flexibleInvoicePreviewPayload || !$('flexInvoiceConfirm')?.checked) return;
+  const button = $('flexInvoiceCreate');
+  const errorBox = $('flexInvoiceCreateError');
+  button.disabled = true;
+  button.textContent = 'מפיק ושומר… אין לסגור';
+  errorBox.classList.remove('show');
+  try {
+    const { data, error } = await sb.functions.invoke('icount-invoice', {
+      body: { action: 'flexible_create', ...flexibleInvoicePreviewPayload },
+    });
+    if (error) throw error;
+    if (!data?.ok) throw new Error(data?.error || 'הפקת החשבונית נכשלה');
+    toast(`חשבונית ${data.invoice_number || ''} הופקה ונשמרה בכרטיס הלקוח`);
+    closeModal();
+    await loadAll();
+    switchTab('invoices');
+  } catch (error) {
+    errorBox.textContent = friendlyError(error);
+    errorBox.classList.add('show');
+    button.disabled = false;
+    button.textContent = 'ניסיון חוזר';
+  }
+}
+
+function openFlexibleInvoice() {
+  flexibleInvoiceRequestId = crypto.randomUUID();
+  flexibleInvoicePreviewPayload = null;
+  const date = todayISO();
+  modal('חשבונית חדשה וגמישה', `
+    <div class="invoice-preview">
+      <div class="note small">המחירים מוזנים לפני מע״מ. לאחר מילוי הפרטים תוצג חשבונית מלאה לבדיקה ורק אז יהיה ניתן לאשר הפקה.</div>
+      <div class="customer-combobox field">
+        <label for="flexInvoiceCustomerSearch">לקוח *</label>
+        <input type="search" id="flexInvoiceCustomerSearch" autocomplete="off" role="combobox"
+               aria-expanded="false" aria-controls="flexInvoiceCustomerList" placeholder="הקלד שם, עסק, טלפון או ח.פ…">
+        <input type="hidden" id="flexInvoiceCustomerId">
+        <div class="customer-options" id="flexInvoiceCustomerList" role="listbox"></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label for="flexInvoiceClientName">שם שיופיע בחשבונית *</label><input id="flexInvoiceClientName" type="text"></div>
+        <div class="field"><label for="flexInvoiceTaxId">ח.פ / ע.מ</label><input id="flexInvoiceTaxId" type="text" inputmode="numeric"></div>
+        <div class="field"><label for="flexInvoiceEmail">מייל</label><input id="flexInvoiceEmail" type="email"></div>
+        <div class="field"><label for="flexInvoiceAddress">כתובת</label><input id="flexInvoiceAddress" type="text"></div>
+        <div class="field"><label for="flexInvoiceDate">תאריך הפקה</label><input id="flexInvoiceDate" type="date" value="${date}"></div>
+        <div class="field"><label for="flexInvoicePaydate">לתשלום עד</label><input id="flexInvoicePaydate" type="date" value="${endOfMonthISO(new Date(`${date}T12:00:00`))}"></div>
+      </div>
+      <datalist id="flexInvoiceModels">${db.products.map((product) => `<option value="${esc(product.model)}">${esc(product.description || '')}</option>`).join('')}</datalist>
+      <div class="row"><h4 class="bold">פריטים</h4><span class="grow"></span><button type="button" class="btn ghost sm" id="flexInvoiceAddLine">➕ הוספת פריט</button></div>
+      <div id="flexInvoiceLines"></div>
+      <div class="grid-2">
+        <div class="field"><label>הנחה</label><div class="row" style="flex-wrap:nowrap">
+          <select id="flexInvoiceDiscountType" style="width:105px"><option value="pct">%</option><option value="amt">₪</option></select>
+          <input id="flexInvoiceDiscount" type="number" min="0" step="0.01" inputmode="decimal" value="0">
+        </div></div>
+        <div class="field"><label for="flexInvoiceNotes">הערה לחשבונית</label><input id="flexInvoiceNotes" type="text" placeholder="טקסט חופשי שיופיע במסמך"></div>
+      </div>
+      <div class="err-msg" id="flexInvoiceError"></div>
+      <button type="button" class="btn block lg" id="flexInvoicePreviewBtn">תצוגה מקדימה</button>
+      <div id="flexInvoicePreview"></div>
+    </div>`, true);
+
+  addFlexibleInvoiceLine();
+  on('flexInvoiceAddLine', 'click', () => addFlexibleInvoiceLine());
+  on('flexInvoiceCustomerSearch', 'focus', () => renderFlexibleInvoiceCustomers(true));
+  on('flexInvoiceCustomerSearch', 'input', () => {
+    $('flexInvoiceCustomerId').value = '';
+    renderFlexibleInvoiceCustomers(true);
+    invalidateFlexibleInvoicePreview();
+  });
+  on('flexInvoiceCustomerSearch', 'blur', () => setTimeout(() => {
+    $('flexInvoiceCustomerList')?.classList.remove('open');
+    $('flexInvoiceCustomerSearch')?.setAttribute('aria-expanded', 'false');
+  }, 150));
+  on('flexInvoiceCustomerSearch', 'keydown', (event) => {
+    if (event.key === 'Escape') $('flexInvoiceCustomerList').classList.remove('open');
+    if (event.key === 'Enter') {
+      const first = $('flexInvoiceCustomerList').querySelector('[data-flex-invoice-customer]');
+      if (first) { event.preventDefault(); selectFlexibleInvoiceCustomer(first.dataset.flexInvoiceCustomer); }
+    }
+  });
+  $('flexInvoiceCustomerList').onclick = (event) => {
+    const option = event.target.closest('[data-flex-invoice-customer]');
+    if (option) selectFlexibleInvoiceCustomer(option.dataset.flexInvoiceCustomer);
+  };
+  $('flexInvoiceLines').onclick = (event) => {
+    const remove = event.target.closest('[data-flex-remove-line]');
+    if (!remove) return;
+    remove.closest('.flex-invoice-line').remove();
+    invalidateFlexibleInvoicePreview();
+  };
+  const fillProductDetails = (event) => {
+    const modelInput = event.target.closest('[data-flex-model]');
+    if (!modelInput) return;
+    const product = db.products.find((item) => item.model.toLowerCase() === modelInput.value.trim().toLowerCase());
+    if (!product) return;
+    modelInput.value = product.model;
+    const row = modelInput.closest('.flex-invoice-line');
+    const description = row.querySelector('[data-flex-description]');
+    const price = row.querySelector('[data-flex-unit-price]');
+    if (!description.value.trim()) description.value = product.description || product.model;
+    if (!Number(price.value)) price.value = Number(product.wholesale_price || 0) || '';
+  };
+  $('flexInvoiceLines').addEventListener('input', fillProductDetails);
+  $('flexInvoiceLines').addEventListener('change', fillProductDetails);
+  $('modalBody').addEventListener('input', (event) => {
+    if (!event.target.closest('#flexInvoiceConfirm')) invalidateFlexibleInvoicePreview();
+  });
+  $('modalBody').addEventListener('change', (event) => {
+    if (!event.target.closest('#flexInvoiceConfirm')) invalidateFlexibleInvoicePreview();
+  });
+  on('flexInvoicePreviewBtn', 'click', () => {
+    showError('flexInvoiceError', '');
+    try { renderFlexibleInvoicePreview(collectFlexibleInvoice()); }
+    catch (error) { showError('flexInvoiceError', error.message); }
+  });
+}
+
 function filteredInvoices() {
   const cust = $('invCustomer').value;
   return db.invoices.filter((v) => !cust || v.customer_id === cust);
@@ -3868,8 +4142,8 @@ function closeModal() {
 // ============================================================
 // לשוניות
 // ============================================================
-const TABS = ['dash', 'orders', 'demand', 'stock', 'returns', 'profit',
-              'collections', 'customers', 'invoices', 'settings'];
+const TABS = ['dash', 'orders', 'stock', 'returns', 'customers', 'invoices',
+              'demand', 'profit', 'collections', 'settings'];
 
 function renderActiveTab() {
   ({
@@ -3904,7 +4178,7 @@ function wire() {
       '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
       '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
       '[data-resend-shipped]',
-      '#newOrderSubmit', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate',
+      '#newOrderSubmit', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave',
       '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
@@ -3966,6 +4240,7 @@ function wire() {
   on('addCustomerBtn', 'click', () => editCustomer(null));
   on('mergeCustomersBtn', 'click', () => mergeCustomers());
   on('customerSearch', 'input', debounce(renderCustomers, 200));
+  on('createFlexibleInvoiceBtn', 'click', openFlexibleInvoice);
   on('uploadInvoiceBtn', 'click', () => uploadInvoice());
   on('invCustomer', 'change', renderInvoices);
   on('addEmailBtn', 'click', addEmail);

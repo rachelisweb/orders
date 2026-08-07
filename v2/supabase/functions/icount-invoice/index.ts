@@ -86,6 +86,34 @@ function invoiceLines(orderItems: OrderItem[], descriptions: Map<string, string>
   return [...groups.values()];
 }
 
+function flexibleLines(value: unknown) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
+    throw new Error('יש להזין בין 1 ל-100 פריטים');
+  }
+  return value.map((raw: any, index: number) => {
+    const sku = String(raw?.sku || '').trim().slice(0, 100);
+    const description = String(raw?.description || '').trim().slice(0, 500);
+    const quantity = Number(raw?.quantity);
+    const unitprice = round2(Number(raw?.unitprice));
+    if (!sku && !description) throw new Error(`חסר דגם או פירוט בפריט ${index + 1}`);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100000) throw new Error(`כמות לא תקינה בפריט ${index + 1}`);
+    if (!Number.isFinite(unitprice) || unitprice <= 0 || unitprice > 10000000) throw new Error(`מחיר לא תקין בפריט ${index + 1}`);
+    return { sku, description: description || sku, quantity, unitprice };
+  });
+}
+
+function validISODate(value: unknown) {
+  const text = String(value || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) throw new Error('תאריך לא תקין');
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (date.getUTCFullYear() !== Number(match[1]) || date.getUTCMonth() + 1 !== Number(match[2])
+      || date.getUTCDate() !== Number(match[3])) {
+    throw new Error('תאריך לא תקין');
+  }
+  return text;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return jsonResponse({ ok: false, error: 'POST בלבד' }, 405);
@@ -95,6 +123,7 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
   let orderId = '';
+  let flexibleRequestId = '';
   let externalCreated = false;
   let externalDocnum = '';
 
@@ -106,7 +135,9 @@ Deno.serve(async (req) => {
     if (profile?.role !== 'admin') return jsonResponse({ ok: false, error: 'הפקת חשבונית מותרת למנהל בלבד' }, 403);
 
     const body = await req.json();
-    if (!['health', 'preview', 'create'].includes(body?.action)) return jsonResponse({ ok: false, error: 'action לא חוקי' }, 400);
+    if (!['health', 'preview', 'create', 'flexible_preview', 'flexible_create'].includes(body?.action)) {
+      return jsonResponse({ ok: false, error: 'action לא חוקי' }, 400);
+    }
 
     // בדיקת חיבור לקריאה בלבד. הנתיב הזה לעולם אינו קורא ל-doc/create.
     if (body.action === 'health') {
@@ -118,6 +149,177 @@ Deno.serve(async (req) => {
         mode: 'read_only',
         invoice_type_available: JSON.stringify(result).toLowerCase().includes('invoice'),
       });
+    }
+
+    if (body.action === 'flexible_preview' || body.action === 'flexible_create') {
+      flexibleRequestId = String(body?.request_id || '');
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(flexibleRequestId)) {
+        return jsonResponse({ ok: false, error: 'מזהה בקשה לא תקין' }, 400);
+      }
+      const customerId = String(body?.customer_id || '');
+      const { data: customer, error: customerError } = await service.from('customers').select('*').eq('id', customerId).single();
+      if (customerError || !customer) return jsonResponse({ ok: false, error: 'הלקוח לא נמצא' }, 404);
+
+      const clientName = String(body?.client_name || '').trim().slice(0, 200);
+      if (!clientName) return jsonResponse({ ok: false, error: 'חסר שם לקוח לחשבונית' }, 400);
+      const vatId = String(body?.vat_id || '').replace(/\D/g, '').slice(0, 20);
+      const email = String(body?.email || '').trim().slice(0, 254);
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonResponse({ ok: false, error: 'כתובת המייל אינה תקינה' }, 400);
+      const address = String(body?.address || '').trim().slice(0, 500);
+      const notes = String(body?.notes || '').trim().slice(0, 1000);
+      const docDate = validISODate(body?.doc_date);
+      const paydate = validISODate(body?.paydate);
+      if (paydate < docDate) return jsonResponse({ ok: false, error: 'תאריך התשלום מוקדם מתאריך ההפקה' }, 400);
+      const lines = flexibleLines(body?.items);
+      const subtotal = round2(lines.reduce((sum, line) => sum + line.quantity * line.unitprice, 0));
+      const discount = round2(Number(body?.discount || 0));
+      if (!Number.isFinite(discount) || discount < 0 || discount > subtotal) {
+        return jsonResponse({ ok: false, error: 'ההנחה אינה תקינה' }, 400);
+      }
+      const beforeVat = round2(subtotal - discount);
+      const vat = round2(beforeVat * VAT_PERCENT / 100);
+      const totalWithVat = round2(beforeVat + vat);
+      const normalized = {
+        customer_id: customer.id, client_name: clientName, vat_id: vatId, email, address,
+        doc_date: docDate, paydate, notes, lines, discount, subtotal, vat_percent: VAT_PERCENT,
+      };
+      const fingerprint = await sha256(normalized);
+      const preview = { lines, subtotal, discount, before_vat: beforeVat, vat, total_with_vat: totalWithVat, doc_date: docDate, paydate };
+      if (body.action === 'flexible_preview') return jsonResponse({ ok: true, preview, fingerprint });
+
+      const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
+      if (!token) return jsonResponse({ ok: false, error: 'ICOUNT_API_TOKEN לא הוגדר בפונקציית השרת' }, 503);
+      const sanity = `rcl-flex-${flexibleRequestId.replace(/-/g, '').slice(0, 20)}`;
+      const now = new Date();
+      const { error: insertClaimError } = await service.from('icount_flexible_invoice_generations').insert({
+        request_id: flexibleRequestId, customer_id: customer.id, fingerprint, sanity_string: sanity, status: 'processing',
+      });
+      if (insertClaimError && insertClaimError.code !== '23505') throw insertClaimError;
+      if (insertClaimError?.code === '23505') {
+        const { data: existing, error: existingError } = await service.from('icount_flexible_invoice_generations')
+          .select('*').eq('request_id', flexibleRequestId).single();
+        if (existingError || !existing) throw existingError || new Error('לא ניתן לבדוק את בקשת ההפקה הקודמת');
+        if (existing.fingerprint !== fingerprint) return jsonResponse({ ok: false, error: 'פרטי החשבונית השתנו לאחר ניסיון הפקה קודם' }, 409);
+        if (existing.status === 'succeeded') {
+          return jsonResponse({ ok: true, reused: true, invoice_number: existing.external_docnum, invoice_id: existing.invoice_id });
+        }
+        if (existing.status === 'needs_review') return jsonResponse({ ok: false, error: existing.error || 'נדרשת בדיקה ידנית לפני ניסיון נוסף' }, 409);
+        const lockedAt = new Date(existing.locked_at || 0).getTime();
+        if (existing.status === 'processing' && lockedAt > now.getTime() - 5 * 60 * 1000) {
+          return jsonResponse({ ok: false, error: 'הפקת החשבונית כבר מתבצעת. יש להמתין ולרענן.' }, 409);
+        }
+        const { error: retryError } = await service.from('icount_flexible_invoice_generations').update({
+          status: 'processing', attempts: Number(existing.attempts || 1) + 1, error: null,
+          locked_at: now.toISOString(), updated_at: now.toISOString(),
+        }).eq('request_id', flexibleRequestId);
+        if (retryError) throw retryError;
+      }
+
+      const { data: generation, error: generationError } = await service.from('icount_flexible_invoice_generations')
+        .select('*').eq('request_id', flexibleRequestId).single();
+      if (generationError || !generation) throw generationError || new Error('יומן ההפקה לא נמצא');
+      externalDocnum = String(generation.external_docnum || '');
+      let docUrl = String(generation.external_url || '');
+      if (!externalDocnum) {
+        try {
+          const created = await icountCall(token, 'doc/create', {
+          doctype: 'invoice',
+          custom_client_id: customer.id,
+          vat_id: vatId || undefined,
+          email: email || undefined,
+          client_name: clientName,
+          client_address: address || undefined,
+          doc_date: docDate,
+          paydate,
+          currency_code: 'ILS',
+          vat_percent: VAT_PERCENT,
+          items: lines.map((line) => ({
+            sku: line.sku || undefined,
+            description: line.sku && line.description !== line.sku ? `${line.sku} — ${line.description}` : line.description,
+            quantity: line.quantity,
+            unitprice: line.unitprice,
+          })),
+          discount: discount || undefined,
+          hwc: notes || undefined,
+          sanity_string: sanity,
+          doc_lang: 'he',
+          send_email: false,
+          send_sms: false,
+          });
+          externalDocnum = String(deepFind(created, 'docnum') || '');
+          docUrl = String(deepFind(created, 'doc_url') || '');
+          externalCreated = true;
+          if (!externalDocnum) throw new Error('iCount יצר מסמך אך לא החזיר מספר מסמך — ההפקה נעצרה לבדיקה');
+          await service.from('icount_flexible_invoice_generations').update({
+            external_doctype: 'invoice', external_docnum: externalDocnum, external_url: docUrl,
+            updated_at: new Date().toISOString(),
+          }).eq('request_id', flexibleRequestId);
+        } catch (error) {
+          if (String((error as any)?.code || (error as Error).message).includes('doc_exists_based_on_sanity_string')) {
+            await service.from('icount_flexible_invoice_generations').update({
+              status: 'needs_review', error: 'iCount דיווח שהמסמך כבר קיים, אך מספרו לא נשמר. נדרשת בדיקה ידנית.',
+              updated_at: new Date().toISOString(),
+            }).eq('request_id', flexibleRequestId);
+          }
+          throw error;
+        }
+      } else {
+        externalCreated = true;
+      }
+
+      const { data: storedInvoice, error: storedInvoiceError } = await service.from('invoices')
+        .select('id, invoice_number').eq('source', 'icount').eq('external_doctype', 'invoice')
+        .eq('external_docnum', externalDocnum).maybeSingle();
+      if (storedInvoiceError) throw storedInvoiceError;
+      if (storedInvoice) {
+        await service.from('icount_flexible_invoice_generations').update({
+          status: 'succeeded', invoice_id: storedInvoice.id, error: null, updated_at: new Date().toISOString(),
+        }).eq('request_id', flexibleRequestId);
+        return jsonResponse({ ok: true, reused: true, invoice_number: storedInvoice.invoice_number, invoice_id: storedInvoice.id });
+      }
+
+      const info = await icountCall(token, 'doc/info', {
+        doctype: 'invoice', docnum: Number(externalDocnum), get_items: false,
+        get_payments: false, get_pdf_link: true, lang: 'he',
+      });
+      const pdfLink = String(deepFind(info, 'pdf_link') || '');
+      if (!pdfLink) throw new Error('החשבונית הופקה אך iCount לא החזיר קישור PDF — ניתן לנסות שוב בבטחה');
+      const pdfResponse = await fetch(pdfLink);
+      if (!pdfResponse.ok) throw new Error(`החשבונית הופקה אך הורדת ה-PDF נכשלה (${pdfResponse.status})`);
+      const pdf = new Uint8Array(await pdfResponse.arrayBuffer());
+      if (pdf.length < 500 || String.fromCharCode(...pdf.slice(0, 4)) !== '%PDF') {
+        throw new Error('iCount החזיר קובץ שאינו PDF — החשבונית לא נשמרה בכרטיס הלקוח');
+      }
+      const fileName = `RACHELI-S-invoice-${externalDocnum}.pdf`;
+      const path = `${customer.id}/icount_${externalDocnum}_${Date.now()}.pdf`;
+      const { error: uploadError } = await service.storage.from('invoices').upload(path, pdf, {
+        contentType: 'application/pdf', upsert: false,
+      });
+      if (uploadError) throw uploadError;
+      const { data: invoice, error: invoiceError } = await service.from('invoices').insert({
+        customer_id: customer.id,
+        order_id: null,
+        invoice_number: externalDocnum,
+        amount: totalWithVat,
+        file_path: path,
+        file_name: fileName,
+        status: 'active',
+        issued_at: docDate,
+        notes: notes || null,
+        uploaded_by: user.id,
+        source: 'icount',
+        external_doctype: 'invoice',
+        external_docnum: externalDocnum,
+        external_url: docUrl || null,
+      }).select('id, invoice_number, file_path').single();
+      if (invoiceError) {
+        await service.storage.from('invoices').remove([path]);
+        throw invoiceError;
+      }
+      await service.from('icount_flexible_invoice_generations').update({
+        status: 'succeeded', invoice_id: invoice.id, error: null, updated_at: new Date().toISOString(),
+      }).eq('request_id', flexibleRequestId);
+      return jsonResponse({ ok: true, invoice_number: externalDocnum, invoice_id: invoice.id, total_with_vat: totalWithVat });
     }
 
     orderId = String(body?.order_id || '');
@@ -283,6 +485,17 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: true, invoice_number: externalDocnum, invoice_id: invoice.id, total_with_vat: totalWithVat });
   } catch (error) {
     console.error(error);
+    if (flexibleRequestId) {
+      const current = await service.from('icount_flexible_invoice_generations')
+        .select('status').eq('request_id', flexibleRequestId).maybeSingle();
+      if (current.data && current.data.status !== 'needs_review' && current.data.status !== 'succeeded') {
+        await service.from('icount_flexible_invoice_generations').update({
+          status: externalCreated && !externalDocnum ? 'needs_review' : 'failed',
+          error: error instanceof Error ? error.message : String(error),
+          updated_at: new Date().toISOString(),
+        }).eq('request_id', flexibleRequestId);
+      }
+    }
     if (orderId) {
       const current = await service.from('icount_invoice_generations').select('status').eq('order_id', orderId).maybeSingle();
       if (current.data && current.data.status !== 'needs_review' && current.data.status !== 'succeeded') {
