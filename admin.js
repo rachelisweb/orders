@@ -75,7 +75,8 @@ async function init() {
 function loadReviewFixtures() {
   const customerA = {
     id: '10000000-0000-0000-0000-000000000001', name: 'שמואל רובניץ', business_name: 'גן וורשא',
-    phone: '0528883053', email: 'customer@example.com', city: 'ירושלים', address: 'רחוב הדוגמה 12',
+    phone: '0528883053', email: 'customer@example.com',
+    email_recipients: ['customer@example.com', 'office@example.com'], city: 'ירושלים', address: 'רחוב הדוגמה 12',
     tax_id: '515555555', discount_pct: 10, price_at_cost: false, is_active: true,
     orders_count: 16, total_units: 284, total_amount: 42860, open_balance: 1723.74,
   };
@@ -189,7 +190,7 @@ async function loadAll() {
         sb.from('products').select('*, inventory(size, qty), collections(name, slug, icon)').order('sort_order'),
         sb.rpc('get_available_inventory'),
         sb.from('orders')
-          .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone, email)')
+          .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone, email, email_recipients)')
           .order('created_at', { ascending: false }).limit(3000),
         sb.from('v_customer_stats').select('*').order('name'),
         sb.from('customers').select('*').order('name'),
@@ -563,9 +564,19 @@ function renderNewOrderCustomerMode() {
   showError('newOrderError', '');
 }
 
-const newOrderCustomerLabel = (customer) => customer.business_name
-  ? `${customer.business_name} — ${customer.name}`
-  : customer.name;
+const customerEmailList = (customer) => [...new Set([
+  ...(Array.isArray(customer?.email_recipients) ? customer.email_recipients : []),
+  customer?.email,
+].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
+
+function parseCustomerEmails(value) {
+  const emails = [...new Set(String(value || '').split(/[\s,;]+/)
+    .map((email) => email.trim().toLowerCase()).filter(Boolean))];
+  const invalid = emails.filter((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+  return { emails, invalid };
+}
+
+const newOrderCustomerLabel = (customer) => customer.business_name || customer.name;
 
 function closeNewOrderCustomerOptions() {
   newOrderCustomerHighlight = -1;
@@ -584,12 +595,12 @@ function renderNewOrderCustomerOptions(open = true) {
       || (c.name || '').toLowerCase().includes(q)
       || (c.business_name || '').toLowerCase().includes(q)
       || (c.phone || '').includes(q)
-      || (c.email || '').toLowerCase().includes(q))
+      || customerEmailList(c).some((email) => email.includes(q)))
     .sort((a, b) => (a.business_name || a.name).localeCompare(b.business_name || b.name, 'he'));
 
   const list = $('newOrderCustomerList');
   list.innerHTML = customers.length ? customers.map((c, index) => {
-    const details = [c.phone, c.email, c.city].filter(Boolean).join(' · ');
+    const details = [c.phone, customerEmailList(c).join(', '), c.city].filter(Boolean).join(' · ');
     return `<button type="button" class="customer-option ${c.id === selected ? 'selected' : ''}"
                     id="newOrderCustomerOption${index}" role="option"
                     aria-selected="${c.id === selected}" data-new-order-customer="${c.id}">
@@ -728,7 +739,7 @@ function openNewOrder() {
   newOrderCollection = null;
   newOrderSubmitting = false;
 
-  for (const id of ['newOrderCustomerSearch', 'newOrderName', 'newOrderBusiness',
+  for (const id of ['newOrderCustomerSearch', 'newOrderBusiness',
                     'newOrderPhone', 'newOrderEmail', 'newOrderCity',
                     'newOrderProductSearch', 'newOrderNotes']) {
     $(id).value = '';
@@ -751,9 +762,10 @@ async function submitNewOrder() {
   showError('newOrderError', '');
 
   const customerId = newOrderCustomerMode === 'existing' ? $('newOrderCustomer').value : null;
+  const newBusinessName = newOrderCustomerMode === 'new' ? $('newOrderBusiness').value.trim() : '';
   const customer = newOrderCustomerMode === 'new' ? {
-    name: $('newOrderName').value.trim(),
-    business_name: $('newOrderBusiness').value.trim() || null,
+    name: newBusinessName,
+    business_name: newBusinessName,
     phone: $('newOrderPhone').value.trim() || null,
     email: $('newOrderEmail').value.trim() || null,
     city: $('newOrderCity').value.trim() || null,
@@ -763,8 +775,8 @@ async function submitNewOrder() {
     showError('newOrderError', 'יש לבחור לקוח');
     return;
   }
-  if (newOrderCustomerMode === 'new' && !customer.name) {
-    showError('newOrderError', 'יש להזין שם ללקוח החדש');
+  if (newOrderCustomerMode === 'new' && !customer.business_name) {
+    showError('newOrderError', 'יש להזין שם עסק ללקוח החדש');
     return;
   }
 
@@ -1278,10 +1290,11 @@ function openOrder(id) {
 
     <div class="card" style="padding:.8rem;margin-bottom:.9rem">
       <div class="grid-2 small">
-        <div><span class="muted">לקוח:</span> <b>${esc(o.customers?.name || o.contact_name || '—')}</b></div>
-        <div><span class="muted">עסק:</span> ${esc(o.customers?.business_name || '—')}</div>
+        <div><span class="muted">שם העסק:</span> <b>${esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—')}</b></div>
         <div><span class="muted">טלפון:</span> ${(o.phone || o.customers?.phone) ? `<a href="tel:${esc(o.phone || o.customers.phone)}">${esc(o.phone || o.customers.phone)}</a>` : '—'}</div>
-        <div><span class="muted">מייל:</span> ${(o.email || o.customers?.email) ? `<a href="mailto:${esc(o.email || o.customers.email)}">${esc(o.email || o.customers.email)}</a>` : '—'}</div>
+        <div><span class="muted">מיילים:</span> ${customerEmailList(o.customers).length
+          ? customerEmailList(o.customers).map((email) => `<a href="mailto:${esc(email)}">${esc(email)}</a>`).join(' · ')
+          : (o.email ? `<a href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : '—')}</div>
         <div><span class="muted">יחידות:</span> <b>${fmtNum(o.total_units)}</b></div>
         <div class="order-payment-summary">
           <div><span class="muted">לתשלום:</span>
@@ -1901,8 +1914,7 @@ function openProfitMonth(monthKey, title) {
     const customer = db.customers.find((c) => c.id === customerId);
     const row = groups.get(groupKey) || {
       customerId,
-      name: customer?.name || it.order.contact_name || 'ללא שם',
-      business: customer?.business_name || '',
+      name: customer?.business_name || customer?.name || it.order.contact_name || 'ללא שם',
       orders: new Set(), units: 0, revenue: 0,
     };
     row.orders.add(it.order.id);
@@ -1915,13 +1927,12 @@ function openProfitMonth(monthKey, title) {
   modal(`לקוחות שהזמינו ב${title}`, rows.length
     ? `<div class="note small">לחיצה על לקוח תפתח את הכרטיס שלו ואת פירוט ההזמנות.</div>
        <div class="table-wrap"><table class="responsive"><thead><tr>
-         <th>לקוח</th><th>עסק</th><th class="num">הזמנות</th><th class="num">יחידות</th><th class="num">מחזור</th>
+         <th>שם העסק</th><th class="num">הזמנות</th><th class="num">יחידות</th><th class="num">מחזור</th>
        </tr></thead><tbody>
        ${rows.map((r) => `<tr ${r.customerId ? `class="clickable" data-month-customer="${r.customerId}"` : ''}>
-         ${td('לקוח', r.customerId
+         ${td('שם העסק', r.customerId
            ? `<button class="table-link" data-month-customer="${r.customerId}">${esc(r.name)}</button>`
            : esc(r.name), 'bold')}
-         ${td('עסק', esc(r.business || '—'))}
          ${td('הזמנות', fmtNum(r.orders.size), 'num')}
          ${td('יחידות', fmtNum(r.units), 'num')}
          ${td('מחזור', fmtMoney(r.revenue), 'num')}
@@ -2829,16 +2840,15 @@ function renderCustomers() {
   }
 
   $('customersTable').innerHTML = `<div class="table-wrap"><table class="responsive"><thead><tr>
-    <th>שם</th><th>עסק</th><th>טלפון</th><th class="num">הזמנות</th>
+    <th>שם העסק</th><th>טלפון</th><th class="num">הזמנות</th>
     <th class="num">יח׳</th><th class="num">מחזור</th><th>אחרונה</th><th></th>
     </tr></thead><tbody>
     ${items.map((c) => `<tr class="clickable" data-customer="${c.id}">
-      ${td('שם', esc(c.name), 'bold')}
-      ${td('עסק', `${esc(c.business_name || '—')}${c.duplicate_status === 'pending'
+      ${td('שם העסק', `${esc(c.business_name || c.name)}${c.duplicate_status === 'pending'
         ? `<div class="chip amber" style="margin-top:.25rem">חשד לכפול של ${esc(c.duplicate_candidate_business || c.duplicate_candidate_name || 'לקוח קיים')}</div>`
         : c.duplicate_status === 'rejected'
           ? '<div class="chip green" style="margin-top:.25rem">נבדק — לא כפול</div>'
-          : ''}`, 'muted small')}
+          : ''}`, 'bold')}
       ${td('טלפון', c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '—', 'small nowrap')}
       ${td('הזמנות', fmtNum(c.orders_count), 'num')}
       ${td('יחידות', fmtNum(c.total_units), 'num')}
@@ -3003,7 +3013,7 @@ function openCustomer(id) {
   }
   const topModels = [...byM.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
 
-  $('customerPanelTitle').textContent = c.name;
+  $('customerPanelTitle').textContent = c.business_name || c.name;
   $('customerPanelBody').innerHTML = `
     ${c.duplicate_status === 'pending' ? `<div class="note warn small">
       <b>חשד לכפילות:</b> שם העסק זהה ל-${esc(c.duplicate_candidate_business || c.duplicate_candidate_name || 'לקוח קיים')}.
@@ -3023,9 +3033,9 @@ function openCustomer(id) {
 
     <div class="card" style="padding:.8rem">
       <div class="grid-2 small">
-        <div><span class="muted">עסק:</span> ${esc(c.business_name || '—')}</div>
+        <div><span class="muted">שם העסק:</span> <b>${esc(c.business_name || c.name)}</b></div>
         <div><span class="muted">טלפון:</span> ${c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '—'}</div>
-        <div><span class="muted">מייל:</span> ${esc(c.email || '—')}</div>
+        <div><span class="muted">מיילים:</span> ${esc(customerEmailList(c).join(', ') || '—')}</div>
         <div><span class="muted">עיר:</span> ${esc(c.city || '—')}</div>
       </div>
       <div class="small" style="margin-top:.5rem">
@@ -3084,19 +3094,17 @@ function openCustomer(id) {
 
 function editCustomer(id) {
   const c = id ? db.customers.find((x) => x.id === id) : null;
+  const currentEmails = customerEmailList(c);
 
-  modal(c ? `עריכת ${c.name}` : 'לקוח חדש', `
-    <div class="grid-2">
-      <div class="field"><label>שם <span class="req">*</span></label>
-        <input type="text" id="uName" value="${esc(c?.name || '')}"></div>
-      <div class="field"><label>שם עסק</label>
-        <input type="text" id="uBiz" value="${esc(c?.business_name || '')}"></div>
-    </div>
+  modal(c ? `עריכת ${c.business_name || c.name}` : 'לקוח חדש', `
+    <div class="field"><label>שם העסק <span class="req">*</span></label>
+      <input type="text" id="uBiz" autocomplete="organization" value="${esc(c?.business_name || c?.name || '')}"></div>
     <div class="grid-2">
       <div class="field"><label>טלפון</label>
         <input type="tel" id="uPhone" inputmode="tel" value="${esc(c?.phone || '')}"></div>
-      <div class="field"><label>אימייל</label>
-        <input type="email" id="uEmail" inputmode="email" value="${esc(c?.email || '')}"></div>
+      <div class="field"><label>כתובות מייל להתראות וחשבוניות</label>
+        <textarea id="uEmails" rows="2" inputmode="email" placeholder="mail@example.com, office@example.com">${esc(currentEmails.join('\n'))}</textarea>
+        <div class="hint">אפשר להזין כמה כתובות, כל אחת בשורה נפרדת או מופרדת בפסיק.</div></div>
     </div>
     <div class="grid-2">
       <div class="field"><label>עיר</label><input type="text" id="uCity" value="${esc(c?.city || '')}"></div>
@@ -3123,13 +3131,16 @@ function editCustomer(id) {
   });
 
   on('uSave', 'click', async () => {
-    const name = $('uName').value.trim();
-    if (!name) { toast('חסר שם לקוח', true); return; }
+    const businessName = $('uBiz').value.trim();
+    if (!businessName) { toast('חסר שם עסק', true); return; }
+    const { emails, invalid } = parseCustomerEmails($('uEmails').value);
+    if (invalid.length) { toast(`כתובת מייל לא תקינה: ${invalid[0]}`, true); return; }
     const rec = {
-      name,
-      business_name: $('uBiz').value.trim()   || null,
+      name:           businessName,
+      business_name:  businessName,
       phone:         $('uPhone').value.trim() || null,
-      email:         $('uEmail').value.trim() || null,
+      email:          emails[0] || null,
+      email_recipients: emails,
       city:          $('uCity').value.trim()  || null,
       tax_id:        $('uTax').value.trim()   || null,
       address:       $('uAddr').value.trim()  || null,
@@ -3281,9 +3292,7 @@ function openIcountInvoicePreview(orderId) {
 // ============================================================
 // חשבוניות
 // ============================================================
-const flexibleInvoiceCustomerLabel = (customer) => customer.business_name
-  ? `${customer.business_name} — ${customer.name}`
-  : customer.name;
+const flexibleInvoiceCustomerLabel = (customer) => customer.business_name || customer.name;
 
 function renderFlexibleInvoiceCustomers(open = true) {
   const search = $('flexInvoiceCustomerSearch');
@@ -4008,8 +4017,7 @@ function orderRowsFlat() {
       rows.push({
         'מס׳ הזמנה': o.order_number,
         'תאריך': fmtDate(o.created_at, false),
-        'לקוח': o.customers?.name || o.contact_name || '',
-        'עסק': o.customers?.business_name || '',
+        'שם העסק': o.customers?.business_name || o.customers?.name || o.contact_name || '',
         'טלפון': o.phone || '',
         'סטטוס': ORDER_STATUS[o.status]?.label || o.status,
         'קולקציה': p?.collections?.name || '',
@@ -4034,8 +4042,7 @@ function orderRowsSummary() {
   return filteredOrders().map((o) => ({
     'מס׳ הזמנה': o.order_number,
     'תאריך': fmtDate(o.created_at, false),
-    'לקוח': o.customers?.name || o.contact_name || '',
-    'עסק': o.customers?.business_name || '',
+    'שם העסק': o.customers?.business_name || o.customers?.name || o.contact_name || '',
     'טלפון': o.phone || '',
     'מייל': o.email || '',
     'סטטוס': ORDER_STATUS[o.status]?.label || o.status,
@@ -4500,7 +4507,8 @@ function wire() {
   });
   on('exportCustomers', 'click', async () => {
     await exportXlsx('לקוחות', [{ name: 'לקוחות', rows: db.customers.map((c) => ({
-      'שם': c.name, 'עסק': c.business_name || '', 'טלפון': c.phone || '', 'מייל': c.email || '',
+      'שם העסק': c.business_name || c.name, 'טלפון': c.phone || '',
+      'מיילים': customerEmailList(c).join(', '),
       'עיר': c.city || '', 'הזמנות': c.orders_count, 'יחידות': c.total_units,
       'מחזור': Number(c.total_amount || 0),
       'הזמנה אחרונה': c.last_order_at ? fmtDate(c.last_order_at, false) : '',

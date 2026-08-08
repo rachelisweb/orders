@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css?v=20260808-2">
+<link rel="stylesheet" href="styles.css?v=20260809-2">
 </head>
 <body>
 
@@ -43,8 +43,8 @@
       </div>
       <div id="signupFields" style="display:none">
         <div class="field">
-          <label for="authName">שם מלא</label>
-          <input type="text" id="authName" autocomplete="name" placeholder="השם שלך">
+          <label for="authName">שם העסק</label>
+          <input type="text" id="authName" autocomplete="organization" placeholder="לדוגמה: החנות שלי">
         </div>
       </div>
 
@@ -69,11 +69,7 @@
       <div class="err-msg" id="profileError"></div>
 
       <div class="field">
-        <label for="pfName">שם מלא <span class="req">*</span></label>
-        <input type="text" id="pfName" autocomplete="name" placeholder="השם שלך">
-      </div>
-      <div class="field">
-        <label for="pfBusiness">שם העסק / החנות</label>
+        <label for="pfBusiness">שם העסק <span class="req">*</span></label>
         <input type="text" id="pfBusiness" autocomplete="organization" placeholder="החנות שלי">
         <div class="hint">אם כבר קיים עסק בשם הזה, החשבון יסומן לבדיקה ורק מנהל יוכל לאשר איחוד</div>
       </div>
@@ -166,11 +162,7 @@
 
         <div class="grid-2">
           <div class="field">
-            <label for="accountName">שם מלא <span class="req">*</span></label>
-            <input type="text" id="accountName" autocomplete="name" placeholder="השם שלך">
-          </div>
-          <div class="field">
-            <label for="accountBusiness">שם העסק / החנות</label>
+            <label for="accountBusiness">שם העסק <span class="req">*</span></label>
             <input type="text" id="accountBusiness" autocomplete="organization" placeholder="לדוגמה: החנות שלי">
           </div>
           <div class="field">
@@ -180,6 +172,11 @@
           <div class="field">
             <label for="accountCity">עיר</label>
             <input type="text" id="accountCity" autocomplete="address-level2" placeholder="לדוגמה: בני ברק">
+          </div>
+          <div class="field" style="grid-column:1/-1">
+            <label for="accountEmails">כתובות מייל להתראות וחשבוניות</label>
+            <textarea id="accountEmails" rows="2" inputmode="email" placeholder="mail@example.com, office@example.com"></textarea>
+            <div class="hint">אפשר להזין כמה כתובות, מופרדות בפסיק או בשורה חדשה.</div>
           </div>
         </div>
 
@@ -278,6 +275,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="app.js?v=20260808-2"></script>
+<script type="module" src="app.js?v=20260809-2"></script>
 </body>
 </html>

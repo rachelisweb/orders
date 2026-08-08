@@ -12,6 +12,8 @@
 /v2/supabase/functions/*
 !/v2/supabase/functions/icount-invoice/
 !/v2/supabase/functions/icount-invoice/**
+!/v2/supabase/functions/order-email/
+!/v2/supabase/functions/order-email/**
 !/v2/supabase/migrations/
 /v2/supabase/migrations/*
 !/v2/supabase/migrations/20260806120000_order_archive_customer_pricing_icount.sql
@@ -25,6 +27,7 @@
 !/v2/supabase/migrations/20260808134000_keep_broad_open_order_repricing.sql
 !/v2/supabase/migrations/20260809100000_sync_customer_details_to_orders.sql
 !/v2/supabase/migrations/20260809101000_customer_contact_sync_trigger.sql
+!/v2/supabase/migrations/20260809110000_business_names_and_customer_emails.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/

@@ -24,6 +24,18 @@ const OPEN_STATUSES = ['pending', 'ready'];
 const isOpenOrder = (o) => OPEN_STATUSES.includes(o.status);
 let myOrderTab = 'open';
 
+const customerEmails = (customer) => [...new Set([
+  ...(Array.isArray(customer?.email_recipients) ? customer.email_recipients : []),
+  customer?.email,
+].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
+
+function parseEmails(value) {
+  const emails = [...new Set(String(value || '').split(/[\s,;]+/)
+    .map((email) => email.trim().toLowerCase()).filter(Boolean))];
+  const invalid = emails.filter((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+  return { emails, invalid };
+}
+
 // תצוגת הקטלוג נשמרת בין ביקורים — זו העדפה אישית, לא מצב זמני
 const VIEW_KEY = 'rachelis:catalogView';
 let catalogView = 'list';
@@ -65,7 +77,7 @@ async function route() {
 
   // כניסה ראשונה — משלימים טלפון ושם עסק. מנהלים פטורים.
   if (needsProfile()) {
-    $('pfName').value = state.profile?.full_name || '';
+    $('pfBusiness').value = state.customer?.business_name || state.customer?.name || state.profile?.full_name || '';
     $('pfPhone').value = state.profile?.phone || '';
     screen('profileScreen');
     return;
@@ -147,10 +159,12 @@ async function handleEmailAuth() {
 
   try {
     if (authMode === 'signup') {
+      const businessName = $('authName').value.trim();
+      if (!businessName) throw new Error('יש למלא שם העסק');
       const { error } = await sb.auth.signUp({
         email, password: pass,
         options: {
-          data: { full_name: $('authName').value.trim() },
+          data: { full_name: businessName, business_name: businessName },
           emailRedirectTo: window.location.origin + window.location.pathname,
         },
       });
@@ -180,11 +194,11 @@ async function signOut() {
 // השלמת פרטים
 // ============================================================
 async function saveProfile() {
-  const name = $('pfName').value.trim();
+  const businessName = $('pfBusiness').value.trim();
   const phone = $('pfPhone').value.trim();
   showError('profileError', '');
 
-  if (!name)  { showError('profileError', 'יש למלא שם מלא'); return; }
+  if (!businessName)  { showError('profileError', 'יש למלא שם העסק'); return; }
   if (!phone) { showError('profileError', 'יש למלא מספר טלפון'); return; }
 
   const btn = $('pfSave');
@@ -193,9 +207,9 @@ async function saveProfile() {
 
   try {
     const { error } = await sb.rpc('complete_profile', {
-      p_full_name: name,
+      p_full_name: businessName,
       p_phone: phone,
-      p_business_name: $('pfBusiness').value.trim() || null,
+      p_business_name: businessName,
       p_city: $('pfCity').value.trim() || null,
     });
     if (error) throw error;
@@ -218,20 +232,22 @@ function updateAccountHeader() {
 }
 
 function fillAccountProfile() {
-  $('accountName').value     = state.profile?.full_name || '';
   $('accountPhone').value    = state.profile?.phone || state.customer?.phone || '';
-  $('accountBusiness').value = state.customer?.business_name || '';
+  $('accountBusiness').value = state.customer?.business_name || state.customer?.name || state.profile?.full_name || '';
   $('accountCity').value     = state.customer?.city || '';
+  $('accountEmails').value   = customerEmails(state.customer).join('\n') || state.profile?.email || '';
   showError('accountProfileError', '');
 }
 
 async function saveAccountProfile() {
-  const name  = $('accountName').value.trim();
+  const businessName = $('accountBusiness').value.trim();
   const phone = $('accountPhone').value.trim();
+  const { emails, invalid } = parseEmails($('accountEmails').value);
   showError('accountProfileError', '');
 
-  if (!name)  { showError('accountProfileError', 'יש למלא שם מלא'); return; }
+  if (!businessName)  { showError('accountProfileError', 'יש למלא שם העסק'); return; }
   if (!phone) { showError('accountProfileError', 'יש למלא מספר טלפון'); return; }
+  if (invalid.length) { showError('accountProfileError', `כתובת מייל לא תקינה: ${invalid[0]}`); return; }
 
   const btn = $('accountProfileSave');
   btn.disabled = true;
@@ -239,12 +255,14 @@ async function saveAccountProfile() {
 
   try {
     const { error } = await sb.rpc('complete_profile', {
-      p_full_name: name,
+      p_full_name: businessName,
       p_phone: phone,
-      p_business_name: $('accountBusiness').value.trim() || null,
+      p_business_name: businessName,
       p_city: $('accountCity').value.trim() || null,
     });
     if (error) throw error;
+    const { error: emailError } = await sb.rpc('set_my_customer_emails', { p_emails: emails });
+    if (emailError) throw emailError;
     await loadProfile();
     updateAccountHeader();
     fillAccountProfile();
@@ -563,9 +581,9 @@ async function submitOrder() {
 
   try {
     const { data, error } = await sb.rpc('create_order', {
-      p_contact_name: state.customer?.name || state.profile?.full_name || 'לקוח',
+      p_contact_name: state.customer?.business_name || state.customer?.name || state.profile?.full_name || 'לקוח',
       p_phone: state.customer?.phone || state.profile?.phone || null,
-      p_email: state.profile?.email || null,
+      p_email: customerEmails(state.customer)[0] || state.profile?.email || null,
       p_notes: $('orderNotes').value.trim() || null,
       p_items: items,
     });
