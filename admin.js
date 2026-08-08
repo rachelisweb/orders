@@ -145,6 +145,17 @@ function loadReviewFixtures() {
       order_number: 118,
       total_amount: db.orders.find((o) => o.order_number === 118).total_amount,
     },
+  }, {
+    id: '50000000-0000-0000-0000-000000000002', customer_id: customerA.id,
+    order_id: db.orders.find((o) => o.order_number === 120).id, invoice_number: '4215',
+    amount: db.orders.find((o) => o.order_number === 120).total_amount,
+    issued_at: '2026-08-08', status: 'active', source: 'icount',
+    file_path: 'review/invoice-4215.pdf', file_name: 'RACHELI S invoice 4215.pdf',
+    customers: { name: customerA.name },
+    orders: {
+      order_number: 120,
+      total_amount: db.orders.find((o) => o.order_number === 120).total_amount,
+    },
   }];
   db.users = [{ id: '60000000-0000-0000-0000-000000000001', customer_id: customerA.id, email: customerA.email }];
   db.emails = [];
@@ -178,7 +189,7 @@ async function loadAll() {
         sb.from('products').select('*, inventory(size, qty), collections(name, slug, icon)').order('sort_order'),
         sb.rpc('get_available_inventory'),
         sb.from('orders')
-          .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone)')
+          .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone, email)')
           .order('created_at', { ascending: false }).limit(3000),
         sb.from('v_customer_stats').select('*').order('name'),
         sb.from('customers').select('*').order('name'),
@@ -922,7 +933,7 @@ function renderOrders() {
     if (pendingView) {
       parts.push(`<button class="btn ghost sm future-order-btn" data-future-order="${o.id}|true">📅 לעונה הבאה</button>`);
     }
-    if (o.status === 'ready') {
+    if (o.status === 'ready' && !nInv) {
       parts.push(`<button class="btn ghost sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>`);
     }
     if (['ready', 'shipped'].includes(o.status)) {
@@ -1269,8 +1280,8 @@ function openOrder(id) {
       <div class="grid-2 small">
         <div><span class="muted">לקוח:</span> <b>${esc(o.customers?.name || o.contact_name || '—')}</b></div>
         <div><span class="muted">עסק:</span> ${esc(o.customers?.business_name || '—')}</div>
-        <div><span class="muted">טלפון:</span> ${o.phone ? `<a href="tel:${esc(o.phone)}">${esc(o.phone)}</a>` : '—'}</div>
-        <div><span class="muted">מייל:</span> ${o.email ? `<a href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : '—'}</div>
+        <div><span class="muted">טלפון:</span> ${(o.phone || o.customers?.phone) ? `<a href="tel:${esc(o.phone || o.customers.phone)}">${esc(o.phone || o.customers.phone)}</a>` : '—'}</div>
+        <div><span class="muted">מייל:</span> ${(o.email || o.customers?.email) ? `<a href="mailto:${esc(o.email || o.customers.email)}">${esc(o.email || o.customers.email)}</a>` : '—'}</div>
         <div><span class="muted">יחידות:</span> <b>${fmtNum(o.total_units)}</b></div>
         <div class="order-payment-summary">
           <div><span class="muted">לתשלום:</span>
