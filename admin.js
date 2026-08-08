@@ -94,6 +94,7 @@ function loadReviewFixtures() {
     { id: '30000000-0000-0000-0000-000000000002', model: '2420-1', description: 'שמלת מקסי מודפסת', image_url: '', collection_id: db.collections[1].id, collections: db.collections[1], wholesale_price: 260, cost_price: 145, retail_price: 520, is_active: true, stock: { S: 3, M: 5, L: 4, XL: 2, XXL: 1 }, total: 15 },
     { id: '30000000-0000-0000-0000-000000000003', model: '4036A', description: 'סריג דק', image_url: '', collection_id: db.collections[1].id, collections: db.collections[1], wholesale_price: 213, cost_price: 126, retail_price: 426, is_active: true, stock: { M: 4, L: 6, XL: 3 }, total: 13 },
   ];
+  db.products.forEach((product) => { product.availableStock = { ...product.stock }; });
   const mkItems = (orderId, rows) => rows.map((r, index) => ({
     id: Number(`${String(orderId).slice(-3)}${index + 1}`), order_id: orderId,
     product_id: db.products.find((p) => p.model === r[0])?.id, model: r[0], size: r[1],
@@ -122,7 +123,7 @@ function loadReviewFixtures() {
     };
   };
   db.orders = [
-    mkOrder(121, 'pending', customerA, [['2413B', 'L', 1, 1, 200], ['2413B', 'XXL', 2, 2, 200], ['2420-1', 'M', 1, 1, 260]], 0),
+    mkOrder(121, 'pending', customerA, [['2413B', 'L', 1, 1, 200], ['2413B', 'XXL', 2, 2, 200], ['2420-1', 'M', 1, 1, 260]], 0, { checked_models: ['2413B'] }),
     mkOrder(120, 'ready', customerA, [['2413B', 'M', 2, 2, 200], ['2420-1', 'S', 1, 1, 260], ['4036A', 'L', 3, 3, 213]], 1, { discount_type: 'pct', discount_value: 10 }),
     mkOrder(119, 'pending', customerB, [['2420-1', 'L', 2, 2, 145], ['4036A', 'XL', 1, 1, 126]], 2, { future: true, pricing_mode: 'cost' }),
     mkOrder(118, 'shipped', customerA, [['2413B', 'S', 3, 3, 200]], 3, { archived: true }),
@@ -171,10 +172,11 @@ function show(id) { ['denyScreen', 'adminScreen'].forEach((s) => $(s)?.classList
 async function loadAll() {
   $('headerSub').textContent = 'טוען…';
   try {
-    const [cols, prods, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols] =
+    const [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols] =
       await Promise.all([
         sb.from('collections').select('*').order('sort_order'),
         sb.from('products').select('*, inventory(size, qty), collections(name, slug, icon)').order('sort_order'),
+        sb.rpc('get_available_inventory'),
         sb.from('orders')
           .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone)')
           .order('created_at', { ascending: false }).limit(3000),
@@ -190,14 +192,20 @@ async function loadAll() {
         sb.from('future_order_collections').select('*'),
       ]);
 
-    for (const r of [cols, prods, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols]) {
+    for (const r of [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols]) {
       if (r.error) throw r.error;
     }
 
     db.collections = cols.data || [];
+    const availableByProduct = new Map();
+    for (const row of available.data || []) {
+      if (!availableByProduct.has(row.product_id)) availableByProduct.set(row.product_id, {});
+      availableByProduct.get(row.product_id)[row.size] = Number(row.qty || 0);
+    }
     db.products = (prods.data || []).map((p) => ({
       ...p,
       stock: Object.fromEntries((p.inventory || []).map((i) => [i.size, i.qty])),
+      availableStock: availableByProduct.get(p.id) || {},
       total: (p.inventory || []).reduce((a, i) => a + i.qty, 0),
     }));
     db.orders    = orders.data || [];
@@ -517,8 +525,9 @@ const BUCKET_META = {
 const bucketMeta = (k) => ORDER_STATUS[k] || BUCKET_META[k];
 
 // ── יצירת הזמנה ידנית — אותה בחירת דגמים ומידות כמו אצל לקוח ──
+const orderableStock = (product) => product.availableStock ?? product.stock ?? {};
 const newOrderProducts = () => db.products.filter((p) =>
-  p.is_active && Object.values(p.stock || {}).some((qty) => Number(qty) > 0));
+  p.is_active && Object.values(orderableStock(p)).some((qty) => Number(qty) > 0));
 
 function newOrderUnits() {
   return Object.values(newOrderCart).reduce((total, sizes) =>
@@ -636,7 +645,8 @@ function renderNewOrderProducts() {
   }
 
   box.innerHTML = products.map((p) => {
-    const sizes = Object.entries(p.stock || {})
+    const stock = orderableStock(p);
+    const sizes = Object.entries(stock)
       .filter(([, qty]) => Number(qty) > 0)
       .map(([size]) => size)
       .sort(sortSizes);
@@ -656,7 +666,7 @@ function renderNewOrderProducts() {
             const qty = newOrderCart[p.model]?.[size] || 0;
             return `<label class="size">
               <span class="lbl">${esc(size)}</span>
-              <input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="${p.stock[size]}"
+              <input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="${stock[size]}"
                      value="${qty || ''}" placeholder="0" class="${qty > 0 ? 'on' : ''}"
                      aria-label="דגם ${esc(p.model)} מידה ${esc(size)}"
                      data-new-order-qty="${esc(p.model)}|${esc(size)}">
@@ -693,7 +703,7 @@ function addNewOrderSeries(model) {
   const product = db.products.find((p) => p.model === model);
   if (!product) return;
   const cart = (newOrderCart[model] ||= {});
-  for (const [size, available] of Object.entries(product.stock || {})) {
+  for (const [size, available] of Object.entries(orderableStock(product))) {
     if (available > 0 && (cart[size] || 0) < available) cart[size] = (cart[size] || 0) + 1;
   }
   renderNewOrderProducts();
@@ -1130,7 +1140,12 @@ async function advanceOrder(id, status, skipConfirm = false) {
 
   if (!skipConfirm) {
     if (status === 'ready') {
-      if (!confirm(`לסמן הזמנה #${o?.order_number} כ"${label}"?\n\nהמלאי יירד ב-${fmtNum(o?.total_units)} יחידות.`)) return;
+      const models = [...new Set((o?.order_items || []).map((item) => item.model))];
+      const checked = new Set(o?.checked_models || []);
+      const missingChecks = models.filter((model) => !checked.has(model));
+      if (missingChecks.length) {
+        if (!confirm(`לא סימנת את כל הדגמים בווי.\n\nהאם שמת את כל הדגמים?\n\nאישור = כן · ביטול = לא`)) return;
+      } else if (!confirm(`לסמן הזמנה #${o?.order_number} כ"${label}"?\n\nהמלאי יירד ב-${fmtNum(o?.total_units)} יחידות.`)) return;
     } else if (!confirm(`לסמן הזמנה #${o?.order_number} כ"${label}"?`)) return;
   }
 
@@ -1184,12 +1199,17 @@ function groupOrderItemsByModel(lines) {
   return [...groups.values()];
 }
 
-function renderAdminOrderItems(groups, editable, anyShort) {
+function renderAdminOrderItems(groups, editable, anyShort, checkedModels = [], orderId = '') {
+  const checked = new Set(checkedModels || []);
   return `<div class="admin-order-models">
     ${groups.map((group) => {
       const product = productByModel(group.model);
       const units = group.lines.reduce((sum, line) => sum + Number(line.qty || 0), 0);
-      return `<div class="admin-order-model">
+      const isChecked = checked.has(group.model);
+      return `<div class="admin-order-model ${isChecked ? 'model-checked' : ''}">
+        ${editable ? `<button class="model-check ${isChecked ? 'checked' : ''}"
+          data-model-check="${orderId}|${esc(group.model)}" aria-pressed="${isChecked}"
+          aria-label="${isChecked ? 'בטל סימון' : 'סמן'} דגם ${esc(group.model)}">${isChecked ? '✓' : ''}</button>` : ''}
         <div class="admin-order-model-image">
           ${product?.image_url
             ? `<img src="${esc(img(product.image_url, 180))}" alt="דגם ${esc(group.model)}" loading="lazy" decoding="async">`
@@ -1304,7 +1324,7 @@ function openOrder(id) {
     ${!editable ? '<div class="note small">🔒 ההזמנה נעולה לעריכה — המלאי כבר עודכן.</div>' : ''}
     ${anyShort ? '<div class="note warn small">⚠️ בשורות המסומנות הכמות שסופקה שונה ממה שהלקוח הזמין. הלקוח רואה את שתי הכמויות באזור האישי.</div>' : ''}
 
-    ${renderAdminOrderItems(itemGroups, editable, anyShort)}
+    ${renderAdminOrderItems(itemGroups, editable, anyShort, o.checked_models, o.id)}
 
     ${editable ? `<button class="btn ghost block add-order-model-btn" data-add-order-model="${o.id}">➕ הוספת דגם להזמנה</button>` : ''}
 
@@ -1459,6 +1479,24 @@ async function editItem(itemId, qty, orderId) {
   }
 }
 
+async function toggleOrderModelCheck(orderId, model, checked) {
+  try {
+    const { error } = await sb.rpc('set_order_model_checked', {
+      p_order_id: orderId, p_model: model, p_checked: checked,
+    });
+    if (error) throw error;
+    const order = db.orders.find((item) => item.id === orderId);
+    if (order) {
+      const values = new Set(order.checked_models || []);
+      if (checked) values.add(model); else values.delete(model);
+      order.checked_models = [...values];
+    }
+    openOrder(orderId);
+  } catch (error) {
+    toast(friendlyError(error), true);
+  }
+}
+
 function openAddOrderModel(orderId) {
   const order = db.orders.find((item) => item.id === orderId);
   if (!order || order.status !== 'pending' || order.stock_applied) {
@@ -1481,7 +1519,7 @@ function openAddOrderModel(orderId) {
       && (product.model.toLowerCase().includes(q) || (product.description || '').toLowerCase().includes(q)))
       .slice(0, 20) : [];
     $('addOrderModelResults').innerHTML = products.length ? products.map((product) => {
-      const sizes = Object.entries(product.stock || {}).filter(([, qty]) => Number(qty) > 0)
+      const sizes = Object.entries(orderableStock(product)).filter(([, qty]) => Number(qty) > 0)
         .sort(([a], [b]) => sortSizes(a, b));
       if (!sizes.length) return '';
       return `<div class="product add-order-product">
@@ -3094,11 +3132,14 @@ function editCustomer(id) {
     }
     $('uSave').disabled = true;
     try {
-      const { error } = c
-        ? await sb.from('customers').update(rec).eq('id', c.id)
+      const { data, error } = c
+        ? await sb.rpc('admin_update_customer', { p_customer_id: c.id, p_data: rec })
         : await sb.from('customers').insert(rec);
       if (error) throw error;
-      toast(c ? 'הלקוח עודכן' : 'הלקוח נוסף');
+      const repriced = Number(data?.repriced_orders || 0);
+      toast(c
+        ? `הלקוח עודכן${repriced ? ` · התמחור עודכן ב-${fmtNum(repriced)} הזמנות פתוחות` : ''}`
+        : 'הלקוח נוסף');
       closeModal();
       $('customerOverlay').classList.remove('active');
       await loadAll();
@@ -4258,7 +4299,7 @@ function wire() {
       '[data-del-order-panel]', '[data-del-return-panel]', '[data-credit]', '[data-credit-panel]',
       '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
       '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
-      '[data-resend-shipped]',
+      '[data-resend-shipped]', '[data-model-check]',
       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave',
@@ -4522,6 +4563,12 @@ function wire() {
     if (rp) { await restoreOrder(rp.dataset.restorePanel); return; }
     const dp = e.target.closest('[data-del-order-panel]');
     if (dp) { await deleteOrder(dp.dataset.delOrderPanel); return; }
+    const modelCheck = e.target.closest('[data-model-check]');
+    if (modelCheck) {
+      const [orderId, model] = modelCheck.dataset.modelCheck.split('|');
+      await toggleOrderModelCheck(orderId, model, modelCheck.getAttribute('aria-pressed') !== 'true');
+      return;
+    }
     const addOrderModel = e.target.closest('[data-add-order-model]');
     if (addOrderModel) { openAddOrderModel(addOrderModel.dataset.addOrderModel); return; }
     const genInv = e.target.closest('[data-generate-invoice]');

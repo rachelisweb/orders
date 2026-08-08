@@ -265,23 +265,49 @@ async function loadCatalog() {
   list.innerHTML = '<div class="loading"><div class="spinner"></div>טוען קטלוג…</div>';
 
   try {
-    const [{ data: cols, error: e1 }, { data: prods, error: e2 }] = await Promise.all([
+    const [{ data: cols, error: e1 }, { data: prods, error: e2 }, { data: available, error: e3 }] = await Promise.all([
       sb.from('collections').select('*').eq('is_active', true).order('sort_order'),
       sb.from('products')
         .select('id, model, description, image_url, sort_order, collection_id, inventory(size, qty)')
         .eq('is_active', true)
         .order('sort_order'),
+      sb.rpc('get_available_inventory'),
     ]);
     if (e1) throw e1;
     if (e2) throw e2;
+    if (e3) throw e3;
 
     state.collections = cols || [];
-    // המלאי נשלף כדי להגביל את הכמות המקסימלית, אך לא מוצג ללקוח
+    const availableByProduct = new Map();
+    for (const row of available || []) {
+      if (!availableByProduct.has(row.product_id)) availableByProduct.set(row.product_id, {});
+      availableByProduct.get(row.product_id)[row.size] = Number(row.qty || 0);
+    }
+    // המלאי הזמין כבר מקזז יחידות שתפוסות בהזמנות ממתינות אחרות.
     allProducts = (prods || []).map((p) => ({
       ...p,
-      stock: Object.fromEntries((p.inventory || []).filter((i) => i.qty > 0).map((i) => [i.size, i.qty])),
+      stock: Object.fromEntries(Object.entries(availableByProduct.get(p.id) || {})
+        .filter(([, qty]) => qty > 0)),
     })).filter((p) => Object.keys(p.stock).length > 0);
     byModel = Object.fromEntries(allProducts.map((p) => [p.model, p]));
+
+    let cartAdjusted = false;
+    for (const [model, sizes] of Object.entries(state.cart)) {
+      const product = byModel[model];
+      if (!product) { delete state.cart[model]; cartAdjusted = true; continue; }
+      for (const [size, current] of Object.entries(sizes)) {
+        const max = Number(product.stock[size] || 0);
+        if (current > max) {
+          if (max > 0) sizes[size] = max; else delete sizes[size];
+          cartAdjusted = true;
+        }
+      }
+      if (!Object.keys(sizes).length) delete state.cart[model];
+    }
+    if (cartAdjusted) {
+      updateBadge();
+      toast('הסל עודכן לפי המלאי שעדיין זמין', true);
+    }
 
     renderTabs();
     renderProducts();
