@@ -20,6 +20,7 @@
 !/v2/supabase/migrations/20260808090000_pending_zero_items_and_add_models.sql
 !/v2/supabase/migrations/20260808130000_order_checks_pricing_and_reservations.sql
 !/v2/supabase/migrations/20260808131000_future_collection_reservation_exemption.sql
+!/v2/supabase/migrations/20260808132000_reprice_orders_waiting_for_invoice.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/
