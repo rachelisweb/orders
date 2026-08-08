@@ -17,3 +17,7 @@
 !/v2/supabase/migrations/20260806120000_order_archive_customer_pricing_icount.sql
 !/v2/supabase/migrations/20260806193000_remove_payment_status.sql
 !/v2/supabase/migrations/20260807090000_flexible_icount_invoices.sql
+!/v2/supabase/migrations/20260808090000_pending_zero_items_and_add_models.sql
+
+# Supabase CLI link metadata is local machine state.
+/supabase/.temp/

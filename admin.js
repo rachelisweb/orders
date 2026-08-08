@@ -139,6 +139,11 @@ function loadReviewFixtures() {
     order_id: db.orders.find((o) => o.order_number === 118).id, invoice_number: '4214',
     amount: 708, issued_at: '2026-08-05', status: 'active', source: 'icount',
     file_path: 'review/invoice-4214.pdf', file_name: 'RACHELI S invoice 4214.pdf',
+    customers: { name: customerA.name },
+    orders: {
+      order_number: 118,
+      total_amount: db.orders.find((o) => o.order_number === 118).total_amount,
+    },
   }];
   db.users = [{ id: '60000000-0000-0000-0000-000000000001', customer_id: customerA.id, email: customerA.email }];
   db.emails = [];
@@ -175,7 +180,7 @@ async function loadAll() {
           .order('created_at', { ascending: false }).limit(3000),
         sb.from('v_customer_stats').select('*').order('name'),
         sb.from('customers').select('*').order('name'),
-        sb.from('invoices').select('*, customers(name), orders(order_number)').order('issued_at', { ascending: false }),
+        sb.from('invoices').select('*, customers(name), orders(order_number, total_amount)').order('issued_at', { ascending: false }),
         sb.from('profiles').select('*, customers(name)').order('created_at', { ascending: false }),
         sb.from('notification_emails').select('*').order('email'),
         sb.from('app_settings').select('*'),
@@ -1272,7 +1277,6 @@ function openOrder(id) {
       ${invoiceButton(o.id)}
     </div>
 
-    <h4 class="bold" style="margin-bottom:.5rem">💸 הנחה</h4>
     ${canDiscount ? `
       <div class="note small">הזן אחוז או סכום. ריק או 0 מבטל את ההנחה.</div>
       <div class="disc-row" style="margin-bottom:.4rem">
@@ -1286,8 +1290,7 @@ function openOrder(id) {
         <button class="btn sm" id="discSave">שמירה</button>
       </div>
       <div class="small muted" id="discPreview" style="margin-bottom:1rem"></div>`
-    : `<div class="note small" style="margin-bottom:1rem">
-        ההנחה נפתחת משלב <b>"מוכנה לאיסוף"</b> והלאה — עד אז הכמויות עוד יכולות להשתנות.</div>`}
+    : ''}
 
     <h4 class="bold" style="margin-bottom:.5rem">📝 הערת מנהל</h4>
     <div class="note small">גלויה למנהלים בלבד. הלקוח לא רואה אותה.</div>
@@ -1298,12 +1301,12 @@ function openOrder(id) {
     <button class="btn ghost sm" id="admNotesSave" style="margin-bottom:1.1rem">שמירת ההערה</button>
 
     <h4 class="bold" style="margin-bottom:.5rem">פריטים (${itemGroups.length} דגמים · ${lines.length} מידות)</h4>
-    ${editable
-      ? '<div class="note small">✏️ ניתן לשנות כמויות כל עוד ההזמנה ממתינה. הזנת 0 מוחקת את המידה. אחרי סימון "מוכנה לאיסוף" המלאי יורד וההזמנה ננעלת.</div>'
-      : '<div class="note small">🔒 ההזמנה נעולה לעריכה — המלאי כבר עודכן.</div>'}
+    ${!editable ? '<div class="note small">🔒 ההזמנה נעולה לעריכה — המלאי כבר עודכן.</div>' : ''}
     ${anyShort ? '<div class="note warn small">⚠️ בשורות המסומנות הכמות שסופקה שונה ממה שהלקוח הזמין. הלקוח רואה את שתי הכמויות באזור האישי.</div>' : ''}
 
     ${renderAdminOrderItems(itemGroups, editable, anyShort)}
+
+    ${editable ? `<button class="btn ghost block add-order-model-btn" data-add-order-model="${o.id}">➕ הוספת דגם להזמנה</button>` : ''}
 
     <h4 class="bold" style="margin-bottom:.5rem">חשבוניות (${invs.length})</h4>
     ${invs.length
@@ -1445,16 +1448,7 @@ async function editItem(itemId, qty, orderId) {
       p_item_id: Number(itemId), p_qty: Number.isFinite(qty) ? qty : 0,
     });
     if (error) throw error;
-    toast(qty > 0 ? 'הכמות עודכנה' : 'השורה נמחקה');
-
-    // תגובה מיידית גם לפני הטעינה החוזרת: 0 מעלים את חלונית המידה.
-    if (qty <= 0) {
-      const input = document.querySelector(`[data-item="${CSS.escape(String(itemId))}"]`);
-      const size = input?.closest('.admin-order-size');
-      const model = input?.closest('.admin-order-model');
-      size?.remove();
-      if (model && !model.querySelector('.admin-order-size')) model.remove();
-    }
+    toast(qty > 0 ? 'הכמות עודכנה' : 'הכמות נשמרה כ־0');
 
     await loadAll();
     if (data?.lines_left > 0) openOrder(orderId);
@@ -1463,6 +1457,87 @@ async function editItem(itemId, qty, orderId) {
     toast(friendlyError(err), true);
     openOrder(orderId);
   }
+}
+
+function openAddOrderModel(orderId) {
+  const order = db.orders.find((item) => item.id === orderId);
+  if (!order || order.status !== 'pending' || order.stock_applied) {
+    toast('ניתן להוסיף דגמים רק להזמנה ממתינה', true);
+    return;
+  }
+
+  modal(`הוספת דגם להזמנה #${order.order_number}`, `
+    <div class="note small">הקלד מספר דגם, בחר כמויות ולחץ על הוספה. הכמות מתווספת לכמות שכבר קיימת בהזמנה.</div>
+    <div class="field"><label for="addOrderModelSearch">חיפוש דגם</label>
+      <input type="search" id="addOrderModelSearch" autocomplete="off" placeholder="לדוגמה: 2420"></div>
+    <div id="addOrderModelResults"><div class="empty"><div class="ico">🔍</div>הקלד מספר דגם לחיפוש</div></div>
+    <div class="err-msg" id="addOrderModelError"></div>
+    <button class="btn block lg" id="addOrderModelSave" disabled>הוספה להזמנה</button>
+  `, true);
+
+  const render = () => {
+    const q = $('addOrderModelSearch').value.trim().toLowerCase();
+    const products = q ? db.products.filter((product) => product.is_active !== false
+      && (product.model.toLowerCase().includes(q) || (product.description || '').toLowerCase().includes(q)))
+      .slice(0, 20) : [];
+    $('addOrderModelResults').innerHTML = products.length ? products.map((product) => {
+      const sizes = Object.entries(product.stock || {}).filter(([, qty]) => Number(qty) > 0)
+        .sort(([a], [b]) => sortSizes(a, b));
+      if (!sizes.length) return '';
+      return `<div class="product add-order-product">
+        <div class="product-img">${imgTag(product.image_url, `דגם ${product.model}`, 240)}</div>
+        <div class="product-body">
+          <div class="product-title">דגם ${esc(product.model)}</div>
+          ${product.description ? `<div class="product-desc">${esc(product.description)}</div>` : ''}
+          <div class="sizes">${sizes.map(([size, available]) => `<label class="size">
+            <span class="lbl">${esc(size)}</span>
+            <input type="number" min="0" max="${available}" inputmode="numeric" placeholder="0"
+              data-add-order-qty="${esc(product.model)}|${esc(size)}" aria-label="דגם ${esc(product.model)} מידה ${esc(size)}">
+          </label>`).join('')}</div>
+        </div>
+      </div>`;
+    }).join('') : q
+      ? '<div class="empty"><div class="ico">🔍</div>לא נמצאו דגמים זמינים</div>'
+      : '<div class="empty"><div class="ico">🔍</div>הקלד מספר דגם לחיפוש</div>';
+    $('addOrderModelSave').disabled = true;
+  };
+
+  $('addOrderModelSearch').oninput = debounce(render, 150);
+  $('addOrderModelResults').oninput = (event) => {
+    const input = event.target.closest('[data-add-order-qty]');
+    if (!input) return;
+    const max = Number(input.max) || 0;
+    let qty = parseInt(input.value, 10);
+    if (!Number.isFinite(qty) || qty < 0) qty = 0;
+    if (qty > max) qty = max;
+    input.value = qty || '';
+    input.classList.toggle('on', qty > 0);
+    $('addOrderModelSave').disabled = !$$('#addOrderModelResults [data-add-order-qty]')
+      .some((item) => Number(item.value) > 0);
+  };
+  on('addOrderModelSave', 'click', async () => {
+    const items = $$('#addOrderModelResults [data-add-order-qty]').map((input) => {
+      const [model, size] = input.dataset.addOrderQty.split('|');
+      return { model, size, qty: Number(input.value) || 0 };
+    }).filter((item) => item.qty > 0);
+    if (!items.length) return;
+    const button = $('addOrderModelSave');
+    button.disabled = true;
+    button.textContent = 'מוסיף להזמנה…';
+    try {
+      const { data, error } = await sb.rpc('admin_add_order_items', { p_order_id: orderId, p_items: items });
+      if (error) throw error;
+      closeModal();
+      toast(`נוספו ${fmtNum(data.added_units)} יחידות להזמנה`);
+      await loadAll();
+      openOrder(orderId);
+    } catch (error) {
+      showError('addOrderModelError', friendlyError(error));
+      button.disabled = false;
+      button.textContent = 'הוספה להזמנה';
+    }
+  });
+  requestAnimationFrame(() => $('addOrderModelSearch').focus());
 }
 
 // ============================================================
@@ -3431,6 +3506,12 @@ function filteredInvoices() {
   return db.invoices.filter((v) => !cust || v.customer_id === cust);
 }
 
+function invoiceDisplayAmount(invoice) {
+  return invoice.order_id && invoice.orders?.total_amount != null
+    ? Number(invoice.orders.total_amount)
+    : (invoice.amount != null ? Number(invoice.amount) : null);
+}
+
 function renderInvoices() {
   const items = filteredInvoices();
   $('invoicesCount').textContent = `(${fmtNum(items.length)})`;
@@ -3448,7 +3529,7 @@ function renderInvoices() {
       ${td('לקוח', esc(v.customers?.name || '—'))}
       ${td('הזמנה', v.orders?.order_number ? '#' + v.orders.order_number : '—')}
       ${td('תאריך', fmtDate(v.issued_at, false), 'small nowrap')}
-      ${td('סכום', v.amount != null ? fmtMoney(v.amount) : '—', 'num')}
+      ${td('סכום', invoiceDisplayAmount(v) != null ? fmtMoney(invoiceDisplayAmount(v)) : '—', 'num')}
       ${td('', `<button class="btn ghost sm" data-dl="${esc(v.file_path)}"
                 data-name="${esc(v.file_name || 'invoice.pdf')}">⬇️</button>
                 ${v.source === 'icount'
@@ -4178,7 +4259,7 @@ function wire() {
       '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
       '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
       '[data-resend-shipped]',
-      '#newOrderSubmit', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
+      '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave',
       '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
@@ -4378,7 +4459,7 @@ function wire() {
     const rows = filteredInvoices().map((v) => ({
       'מס׳ חשבונית': v.invoice_number || '', 'לקוח': v.customers?.name || '',
       'הזמנה': v.orders?.order_number || '', 'תאריך': fmtDate(v.issued_at, false),
-      'סכום': Number(v.amount || 0),
+      'סכום': invoiceDisplayAmount(v) ?? 0,
     }));
     if (!rows.length) { toast('אין חשבוניות לייצוא', true); return; }
     await exportXlsx('חשבוניות', [{ name: 'חשבוניות', rows }]);
@@ -4441,6 +4522,8 @@ function wire() {
     if (rp) { await restoreOrder(rp.dataset.restorePanel); return; }
     const dp = e.target.closest('[data-del-order-panel]');
     if (dp) { await deleteOrder(dp.dataset.delOrderPanel); return; }
+    const addOrderModel = e.target.closest('[data-add-order-model]');
+    if (addOrderModel) { openAddOrderModel(addOrderModel.dataset.addOrderModel); return; }
     const genInv = e.target.closest('[data-generate-invoice]');
     if (genInv) { openIcountInvoicePreview(genInv.dataset.generateInvoice); return; }
     const resendShipment = e.target.closest('[data-resend-shipped]');

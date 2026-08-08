@@ -737,6 +737,20 @@ function openMyOrder(id) {
       <span class="muted small">${fmtDate(o.created_at)}</span>
     </div>
 
+    <div class="order-invoices-top">
+      <h4 class="bold" style="margin:.5rem 0">🧾 חשבוניות (${invs.length})</h4>
+      ${invs.length
+        ? invs.map((v) => `
+            <button class="inv-row" data-dl="${esc(v.file_path)}" data-name="${esc(v.file_name || 'invoice.pdf')}">
+              <span class="grow">
+                <b>${esc(v.invoice_number || 'חשבונית')}</b>
+                <span class="muted small"> · ${fmtDate(v.issued_at, false)}</span>
+              </span>
+              <span class="dl">⬇️ הורדה</span>
+            </button>`).join('')
+        : '<div class="small muted">עדיין לא הופקה חשבונית להזמנה הזו</div>'}
+    </div>
+
     ${done
       ? `<div class="ship-note">${st.icon} ${esc(st.label)}${
           o.shipped_at ? ` ב-${fmtDate(o.shipped_at, false)}` : ''} — למטה מה שנשלח בפועל</div>`
@@ -771,18 +785,6 @@ function openMyOrder(id) {
     </div>
 
     ${o.notes ? `<div class="note small"><b>ההערה שלך:</b> ${esc(o.notes)}</div>` : ''}
-
-    <h4 class="bold" style="margin:.5rem 0">🧾 חשבוניות (${invs.length})</h4>
-    ${invs.length
-      ? invs.map((v) => `
-          <button class="inv-row" data-dl="${esc(v.file_path)}" data-name="${esc(v.file_name || 'invoice.pdf')}">
-            <span class="grow">
-              <b>${esc(v.invoice_number || 'חשבונית')}</b>
-              <span class="muted small"> · ${fmtDate(v.issued_at, false)}</span>
-            </span>
-            <span class="dl">⬇️ הורדה</span>
-          </button>`).join('')
-      : '<div class="small muted">עדיין לא הופקה חשבונית להזמנה הזו</div>'}
   `;
 
   $('myOrderFoot').innerHTML =

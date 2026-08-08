@@ -577,6 +577,14 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 
+.add-order-model-btn { margin: 1rem 0; }
+.add-order-product { margin-bottom: .75rem; }
+.order-invoices-top {
+  padding-bottom: .85rem;
+  margin-bottom: .85rem;
+  border-bottom: 1px solid var(--border);
+}
+
 @media (max-width: 520px) {
   .admin-order-model {
     grid-template-columns: 78px minmax(0, 1fr);
