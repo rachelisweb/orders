@@ -169,7 +169,7 @@ async function handleEmailAuth() {
         },
       });
       if (error) throw error;
-      toast('נרשמת! אם נשלח מייל אישור — אשר אותו ואז התחבר');
+      toast('נרשמת בהצלחה — אפשר להתחיל להשתמש במערכת');
     } else {
       const { error } = await sb.auth.signInWithPassword({ email, password: pass });
       if (error) throw error;
