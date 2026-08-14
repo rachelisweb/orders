@@ -1137,6 +1137,14 @@ td.pick, th.pick { width: 38px; text-align: center; }
   .container { padding-inline: .5rem; padding-top: .65rem; }
   .card { padding: .75rem; margin-bottom: .75rem; }
   .panel-body, .panel-foot { padding: .65rem; }
+  #cartOverlay.guest-checkout .panel { overflow-y: auto; }
+  #cartOverlay.guest-checkout .panel-head {
+    position: sticky; top: 0; z-index: 2;
+  }
+  #cartOverlay.guest-checkout .panel-body {
+    flex: none; overflow: visible;
+  }
+  #cartOverlay.guest-checkout .panel-foot { flex: none; }
 
   .act-row { align-items: stretch; flex-direction: column; }
   .act-row > .row { width: 100%; flex-wrap: nowrap; }

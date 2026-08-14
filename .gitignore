@@ -30,6 +30,7 @@
 !/v2/supabase/migrations/20260809110000_business_names_and_customer_emails.sql
 !/v2/supabase/migrations/20260814150000_guest_orders.sql
 !/v2/supabase/migrations/20260814173000_hide_inventory_from_guests.sql
+!/v2/supabase/migrations/20260814180000_allow_guest_order_source.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/

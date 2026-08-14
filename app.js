@@ -134,6 +134,7 @@ function exitGuest() {
   state.cart = {};
   $('orderNotes').value = '';
   $('guestOrderFields').hidden = true;
+  $('cartOverlay').classList.remove('guest-checkout');
   $('guestBusiness').value = '';
   $('guestEmail').value = '';
   $('guestPhone').value = '';
@@ -635,6 +636,7 @@ async function submitOrder() {
 
   if (isGuest && $('guestOrderFields').hidden) {
     $('guestOrderFields').hidden = false;
+    $('cartOverlay').classList.add('guest-checkout');
     $('guestBusiness').focus();
     $('guestOrderFields').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     return;
@@ -680,6 +682,7 @@ async function submitOrder() {
     $('orderNotes').value = '';
     if (isGuest) {
       $('guestOrderFields').hidden = true;
+      $('cartOverlay').classList.remove('guest-checkout');
       $('guestBusiness').value = '';
       $('guestEmail').value = '';
       $('guestPhone').value = '';
