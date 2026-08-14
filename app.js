@@ -18,6 +18,7 @@ let allProducts = [];
 let byModel = {};
 let myOrders = [];
 let myInvoices = new Map();          // order_id → [invoices]
+const GUEST_LINE_LIMIT = 999;        // לא חושף לאורח את כמות המלאי המדויקת
 
 // ההזמנות שעדיין בטיפול מול אלה שכבר יצאו. ברגע שהמנהל מסמן
 // "נשלחה" ההזמנה עוברת מ"ממתינות" ל"היסטוריה".
@@ -355,7 +356,9 @@ async function loadCatalog() {
     const availableByProduct = new Map();
     for (const row of available || []) {
       if (!availableByProduct.has(row.product_id)) availableByProduct.set(row.product_id, {});
-      availableByProduct.get(row.product_id)[row.size] = Number(row.qty || 0);
+      availableByProduct.get(row.product_id)[row.size] = isGuest
+        ? GUEST_LINE_LIMIT
+        : Number(row.qty || 0);
     }
     // המלאי הזמין כבר מקזז יחידות שתפוסות בהזמנות ממתינות אחרות.
     allProducts = (prods || []).map((p) => ({
@@ -670,7 +673,7 @@ async function submitOrder() {
       p_notes: $('orderNotes').value.trim() || null,
       p_items: items,
     };
-    const { data, error } = await sb.rpc(isGuest ? 'create_guest_order' : 'create_order', params);
+    const { data, error } = await sb.rpc(isGuest ? 'submit_guest_order' : 'create_order', params);
     if (error) throw error;
 
     state.cart = {};
