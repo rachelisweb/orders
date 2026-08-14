@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css?v=20260810-1">
+<link rel="stylesheet" href="styles.css?v=20260814-2">
 </head>
 <body>
 
@@ -49,6 +49,8 @@
       </div>
 
       <button class="btn block lg" id="authSubmit">התחברות</button>
+      <div class="divider">או ללא חשבון</div>
+      <button class="btn ghost block lg" id="guestBtn">כניסה כאורח</button>
       <div class="center" style="margin-top:1rem">
         <button class="btn ghost sm" id="authToggle">אין לי חשבון — הרשמה</button>
       </div>
@@ -116,6 +118,8 @@
     <button class="icon-btn" id="cartBtn" title="סל ההזמנה" aria-label="סל ההזמנה">
       🛒<span class="badge hidden" id="cartBadge">0</span>
     </button>
+
+    <button class="btn ghost sm guest-exit-btn" id="guestExitBtn" style="display:none">🚪 יציאה</button>
 
     <div class="menu-wrap">
       <button class="icon-btn" id="accountBtn" title="החשבון שלי" aria-label="החשבון שלי">👤</button>
@@ -203,7 +207,7 @@
         <div style="font-size:3rem;margin-bottom:.8rem">✅</div>
         <h2 class="plain">ההזמנה נשלחה בהצלחה!</h2>
         <p class="muted" id="successMsg" style="margin:.6rem 0 .4rem"></p>
-        <p class="muted small" style="margin-bottom:1.5rem">שלחנו לך מייל אישור. ניצור קשר לתיאום אספקה.</p>
+        <p class="muted small" id="successFollowup" style="margin-bottom:1.5rem">שלחנו לך מייל אישור. ניצור קשר לתיאום אספקה.</p>
         <div class="row" style="justify-content:center">
           <button class="btn" id="successBack">חזרה לקטלוג</button>
           <button class="btn ghost" id="successOrders">ההזמנות שלי</button>
@@ -246,6 +250,21 @@
         <span class="bold" id="cartTotal"></span>
       </div>
       <div class="err-msg" id="cartError"></div>
+      <div id="guestOrderFields" class="guest-order-fields" hidden>
+        <div class="note" style="margin-bottom:.8rem">כדי לשלוח את ההזמנה, נשמח לדעת למי היא מיועדת.</div>
+        <div class="field">
+          <label for="guestBusiness">שם העסק <span class="req">*</span></label>
+          <input type="text" id="guestBusiness" autocomplete="organization" placeholder="לדוגמה: החנות שלי">
+        </div>
+        <div class="field">
+          <label for="guestEmail">אימייל <span class="muted small">(מומלץ)</span></label>
+          <input type="email" id="guestEmail" autocomplete="email" inputmode="email" placeholder="name@example.com">
+        </div>
+        <div class="field">
+          <label for="guestPhone">טלפון <span class="muted small">(מומלץ)</span></label>
+          <input type="tel" id="guestPhone" autocomplete="tel" inputmode="tel" placeholder="050-0000000">
+        </div>
+      </div>
       <button class="btn block lg" id="submitOrderBtn">שלח הזמנה</button>
     </div>
   </div>
@@ -275,6 +294,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="app.js?v=20260810-1"></script>
+<script type="module" src="app.js?v=20260814-2"></script>
 </body>
 </html>

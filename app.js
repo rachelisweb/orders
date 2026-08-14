@@ -12,6 +12,7 @@ import {
 } from './lib.js';
 
 let authMode = 'signin';
+let isGuest = false;
 let activeCollection = null;
 let allProducts = [];
 let byModel = {};
@@ -52,7 +53,7 @@ async function init() {
     if (event === 'SIGNED_IN' && window.location.hash.includes('access_token')) {
       history.replaceState(null, '', window.location.pathname + window.location.search);
     }
-    if (event === 'SIGNED_OUT') { screen('authScreen'); return; }
+    if (event === 'SIGNED_OUT' && !isGuest) { screen('authScreen'); return; }
     if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') route();
   });
 
@@ -60,6 +61,10 @@ async function init() {
 }
 
 async function route() {
+  if (isGuest) {
+    enterGuestApp();
+    return;
+  }
   try {
     await loadProfile();
   } catch (err) {
@@ -90,10 +95,50 @@ async function route() {
   }
 
   updateAccountHeader();
+  setSignedInNavigation();
 
   screen('appScreen');
   nav('catalog');
   await loadCatalog();
+}
+
+async function startGuest() {
+  isGuest = true;
+  state.user = null;
+  state.profile = null;
+  state.customer = null;
+  enterGuestApp();
+  await loadCatalog();
+}
+
+function enterGuestApp() {
+  screen('appScreen');
+  $('accountBtn').style.display = 'none';
+  $('guestExitBtn').style.display = '';
+  $('navPersonalArea').style.display = 'none';
+  $$('.bn-item[data-nav="orders"]').forEach((b) => { b.style.display = 'none'; });
+  nav('catalog');
+}
+
+function setSignedInNavigation() {
+  $('accountBtn').style.display = '';
+  $('guestExitBtn').style.display = 'none';
+  $('navPersonalArea').style.display = '';
+  $$('.bn-item[data-nav="orders"]').forEach((b) => { b.style.display = ''; });
+  $('successOrders').style.display = '';
+}
+
+function exitGuest() {
+  isGuest = false;
+  state.cart = {};
+  $('orderNotes').value = '';
+  $('guestOrderFields').hidden = true;
+  $('guestBusiness').value = '';
+  $('guestEmail').value = '';
+  $('guestPhone').value = '';
+  closeCart();
+  updateBadge();
+  screen('authScreen');
 }
 
 function screen(id) {
@@ -184,6 +229,7 @@ async function handleEmailAuth() {
 }
 
 async function signOut() {
+  isGuest = false;
   setCustomerPreview(false);
   await sb.auth.signOut();
   state.cart = {};
@@ -283,17 +329,27 @@ async function loadCatalog() {
   list.innerHTML = '<div class="loading"><div class="spinner"></div>טוען קטלוג…</div>';
 
   try {
-    const [{ data: cols, error: e1 }, { data: prods, error: e2 }, { data: available, error: e3 }] = await Promise.all([
+    let cols, prods, available;
+    if (isGuest) {
+      const { data, error } = await sb.rpc('get_guest_catalog');
+      if (error) throw error;
+      cols = data?.collections || [];
+      prods = data?.products || [];
+      available = data?.inventory || [];
+    } else {
+      const [{ data: c, error: e1 }, { data: p, error: e2 }, { data: a, error: e3 }] = await Promise.all([
       sb.from('collections').select('*').eq('is_active', true).order('sort_order'),
       sb.from('products')
         .select('id, model, description, image_url, sort_order, collection_id, inventory(size, qty)')
         .eq('is_active', true)
         .order('sort_order'),
       sb.rpc('get_available_inventory'),
-    ]);
-    if (e1) throw e1;
-    if (e2) throw e2;
-    if (e3) throw e3;
+      ]);
+      if (e1) throw e1;
+      if (e2) throw e2;
+      if (e3) throw e3;
+      cols = c; prods = p; available = a;
+    }
 
     state.collections = cols || [];
     const availableByProduct = new Map();
@@ -574,32 +630,70 @@ async function submitOrder() {
   }
   if (!items.length) { showError('cartError', 'הסל ריק'); return; }
 
+  if (isGuest && $('guestOrderFields').hidden) {
+    $('guestOrderFields').hidden = false;
+    $('guestBusiness').focus();
+    $('guestOrderFields').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+
+  const guestBusiness = isGuest ? $('guestBusiness').value.trim() : '';
+  const guestEmail = isGuest ? $('guestEmail').value.trim() : '';
+  const guestPhone = isGuest ? $('guestPhone').value.trim() : '';
+  if (isGuest && !guestBusiness) {
+    showError('cartError', 'יש למלא שם העסק');
+    $('guestBusiness').focus();
+    return;
+  }
+  if (isGuest && guestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) {
+    showError('cartError', 'כתובת האימייל אינה תקינה');
+    $('guestEmail').focus();
+    return;
+  }
+
   state.submitting = true;
   const btn = $('submitOrderBtn');
   btn.disabled = true;
   btn.textContent = 'שולח…';
 
   try {
-    const { data, error } = await sb.rpc('create_order', {
+    const params = isGuest ? {
+      p_business_name: guestBusiness,
+      p_phone: guestPhone || null,
+      p_email: guestEmail || null,
+      p_notes: $('orderNotes').value.trim() || null,
+      p_items: items,
+    } : {
       p_contact_name: state.customer?.business_name || state.customer?.name || state.profile?.full_name || 'לקוח',
       p_phone: state.customer?.phone || state.profile?.phone || null,
       p_email: customerEmails(state.customer)[0] || state.profile?.email || null,
       p_notes: $('orderNotes').value.trim() || null,
       p_items: items,
-    });
+    };
+    const { data, error } = await sb.rpc(isGuest ? 'create_guest_order' : 'create_order', params);
     if (error) throw error;
 
     state.cart = {};
     $('orderNotes').value = '';
+    if (isGuest) {
+      $('guestOrderFields').hidden = true;
+      $('guestBusiness').value = '';
+      $('guestEmail').value = '';
+      $('guestPhone').value = '';
+    }
     updateBadge();
     closeCart();
 
     $('successMsg').textContent =
       `הזמנה מס׳ ${data.order_number} · ${fmtNum(data.total_units)} יחידות`;
+    $('successFollowup').textContent = isGuest && !guestEmail
+      ? 'ההזמנה התקבלה. ניצור קשר לתיאום אספקה אם הוזן מספר טלפון.'
+      : 'שלחנו לך מייל אישור. ניצור קשר לתיאום אספקה.';
+    $('successOrders').style.display = isGuest ? 'none' : '';
     view('successView', '✅ נשלח', '');
     $$('.bn-item').forEach((b) => b.classList.remove('active'));
 
-    notifyNewOrder(data.order_id);
+    notifyNewOrder(data.order_id, data.notification_token);
     loadCatalog();
   } catch (err) {
     console.error(err);
@@ -612,9 +706,11 @@ async function submitOrder() {
 }
 
 // שליחת המיילים היא best-effort: הזמנה שנשמרה לא נכשלת בגלל מייל
-async function notifyNewOrder(orderId) {
+async function notifyNewOrder(orderId, notificationToken = null) {
   try {
-    await sb.functions.invoke('order-email', { body: { order_id: orderId, event: 'created' } });
+    await sb.functions.invoke('order-email', {
+      body: { order_id: orderId, event: 'created', notification_token: notificationToken },
+    });
   } catch (err) {
     console.warn('order-email failed', err);
   }
@@ -872,6 +968,8 @@ function wire() {
   on('googleBtn',    'click', handleGoogle);
   on('authSubmit',   'click', handleEmailAuth);
   on('authToggle',   'click', () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin'));
+  on('guestBtn',     'click', startGuest);
+  on('guestExitBtn', 'click', exitGuest);
   on('authPassword', 'keydown', (e) => { if (e.key === 'Enter') handleEmailAuth(); });
   on('authEmail',    'keydown', (e) => { if (e.key === 'Enter') $('authPassword').focus(); });
 

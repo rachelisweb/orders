@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
   try {
-    const { order_id, event, to } = await req.json();
+    const { order_id, event, to, notification_token } = await req.json();
     if (!['created', 'shipped', 'test'].includes(event)) {
       return json({ ok: false, error: 'event חייב להיות created / shipped / test' }, 400);
     }
@@ -211,16 +211,23 @@ Deno.serve(async (req) => {
     // הודעת "נשלחה" מותרת למנהל בלבד.
     const jwt = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
     const { data: { user }, error: authErr } = await sb.auth.getUser(jwt);
-    if (authErr || !user) return json({ ok: false, error: 'נדרשת התחברות' }, 401);
+    const guestMayNotify = event === 'created'
+      && order.source === 'guest'
+      && order.user_id === null
+      && typeof notification_token === 'string'
+      && order.guest_notification_token === notification_token;
+    if ((authErr || !user) && !guestMayNotify) {
+      return json({ ok: false, error: 'נדרשת התחברות' }, 401);
+    }
 
-    const { data: callerProfile } = await sb
-      .from('profiles').select('role').eq('id', user.id).maybeSingle();
+    const { data: callerProfile } = user ? await sb
+      .from('profiles').select('role').eq('id', user.id).maybeSingle() : { data: null };
     const callerIsAdmin = callerProfile?.role === 'admin';
 
     if (event === 'shipped' && !callerIsAdmin) {
       return json({ ok: false, error: 'הודעת משלוח מותרת למנהל בלבד' }, 403);
     }
-    if (event === 'created' && !callerIsAdmin && order.user_id !== user.id) {
+    if (event === 'created' && !guestMayNotify && !callerIsAdmin && order.user_id !== user?.id) {
       return json({ ok: false, error: 'אין הרשאה לשלוח מייל עבור הזמנה זו' }, 403);
     }
 
@@ -261,6 +268,9 @@ Deno.serve(async (req) => {
           teamCreatedEmail(order, brand, who, customerEmail),
         );
         sent.push(...team);
+      }
+      if (guestMayNotify) {
+        await sb.from('orders').update({ guest_notification_token: null }).eq('id', order.id);
       }
     }
 

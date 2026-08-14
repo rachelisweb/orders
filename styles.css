@@ -912,6 +912,13 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   margin: 1rem 0; color: var(--faint); font-size: .8rem;
 }
 .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.guest-order-fields { margin-bottom: 1rem; padding: .9rem; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2); }
+.guest-exit-btn { white-space: nowrap; }
+
+@media (max-width: 480px) {
+  .guest-exit-btn { min-height: 38px; padding-inline: .55rem; }
+  .guest-order-fields { padding: .75rem; }
+}
 
 /* ── מתג תצוגה: רשימה / רשת ───────────────────────────── */
 .view-toggle {
