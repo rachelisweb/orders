@@ -19,6 +19,7 @@ let byModel = {};
 let myOrders = [];
 let myInvoices = new Map();          // order_id → [invoices]
 const GUEST_LINE_LIMIT = 999;        // לא חושף לאורח את כמות המלאי המדויקת
+const guestApprovedQty = new Map();  // הכמות האחרונה שהשרת אישר לכל דגם/מידה
 
 // ההזמנות שעדיין בטיפול מול אלה שכבר יצאו. ברגע שהמנהל מסמן
 // "נשלחה" ההזמנה עוברת מ"ממתינות" ל"היסטוריה".
@@ -473,6 +474,7 @@ function renderProducts() {
               <input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="${p.stock[s]}"
                      value="${cur || ''}" placeholder="0" class="${cur > 0 ? 'on' : ''}"
                      aria-label="דגם ${esc(p.model)} מידה ${esc(s)}"
+                     data-last-approved="${isGuest ? (guestApprovedQty.get(`${p.model}|${s}`) || 0) : cur}"
                      data-m="${esc(p.model)}" data-s="${esc(s)}">
             </label>`;
           }).join('')}
@@ -485,12 +487,100 @@ function renderProducts() {
     const inp = e.target.closest('input[data-m]');
     if (inp) setQty(inp);
   };
+  list.onchange = (e) => {
+    const inp = e.target.closest('input[data-m][data-s]');
+    if (inp) validateGuestInput(inp);
+  };
   list.onclick = (e) => {
     const zoom = e.target.closest('[data-zoom]');
     if (zoom) { openImg(zoom.dataset.zoom); return; }
     const serie = e.target.closest('[data-serie]');
     if (serie) addSerie(serie.dataset.serie);
   };
+}
+
+function setCartLine(model, size, qty) {
+  if (qty > 0) {
+    (state.cart[model] ||= {})[size] = qty;
+  } else if (state.cart[model]) {
+    delete state.cart[model][size];
+    if (!Object.keys(state.cart[model]).length) delete state.cart[model];
+  }
+  updateBadge();
+}
+
+async function checkGuestItems(items) {
+  if (!isGuest || !items.length) return { available: true, unavailable: [] };
+  const { data, error } = await sb.rpc('validate_guest_cart', { p_items: items });
+  if (error) throw error;
+  return data || { available: false, unavailable: items };
+}
+
+async function validateGuestInput(inp) {
+  if (!isGuest) return true;
+  const model = inp.dataset.m;
+  const size = inp.dataset.s;
+  const qty = Number(state.cart[model]?.[size] || 0);
+  const previous = Number(inp.dataset.lastApproved || 0);
+  if (qty <= 0) {
+    guestApprovedQty.set(`${model}|${size}`, 0);
+    inp.dataset.lastApproved = '0';
+    return true;
+  }
+
+  inp.disabled = true;
+  inp.setAttribute('aria-busy', 'true');
+  try {
+    const result = await checkGuestItems([{ model, size, qty }]);
+    if (!result.available) {
+      const adjusted = Number(result.unavailable?.[0]?.qty || 0);
+      setCartLine(model, size, adjusted);
+      guestApprovedQty.set(`${model}|${size}`, adjusted);
+      inp.dataset.lastApproved = String(adjusted);
+      inp.value = adjusted || '';
+      inp.classList.toggle('on', adjusted > 0);
+      toast(`דגם ${model} מידה ${size}: הכמות עודכנה למקסימום הזמין (${adjusted})`, true);
+      return false;
+    }
+    guestApprovedQty.set(`${model}|${size}`, qty);
+    inp.dataset.lastApproved = String(qty);
+    return true;
+  } catch (err) {
+    setCartLine(model, size, previous);
+    inp.value = previous || '';
+    inp.classList.toggle('on', previous > 0);
+    toast(friendlyError(err), true);
+    return false;
+  } finally {
+    inp.disabled = false;
+    inp.removeAttribute('aria-busy');
+  }
+}
+
+async function validateGuestCartBeforeSubmit() {
+  if (!isGuest) return true;
+  const items = [];
+  for (const [model, sizes] of Object.entries(state.cart)) {
+    for (const [size, qty] of Object.entries(sizes)) {
+      if (qty > 0) items.push({ model, size, qty });
+    }
+  }
+  try {
+    const result = await checkGuestItems(items);
+    if (result.available) return true;
+    for (const line of result.unavailable || []) {
+      const adjusted = Number(line.qty || 0);
+      setCartLine(line.model, line.size, adjusted);
+      guestApprovedQty.set(`${line.model}|${line.size}`, adjusted);
+    }
+    renderCart();
+    renderProducts();
+    toast('הכמויות בסל עודכנו אוטומטית למלאי המרבי הזמין');
+    return true;
+  } catch (err) {
+    showError('cartError', friendlyError(err));
+    return false;
+  }
 }
 
 function setQty(inp) {
@@ -505,26 +595,38 @@ function setQty(inp) {
   inp.value = v || '';
   inp.classList.toggle('on', v > 0);
 
-  if (v > 0) {
-    (state.cart[model] ||= {})[size] = v;
-  } else if (state.cart[model]) {
-    delete state.cart[model][size];
-    if (!Object.keys(state.cart[model]).length) delete state.cart[model];
-  }
-  updateBadge();
+  setCartLine(model, size, v);
 }
 
-function addSerie(model) {
+async function addSerie(model) {
   const p = byModel[model];
   if (!p) return;
   const cart = (state.cart[model] ||= {});
+  const candidates = Object.entries(p.stock).map(([size]) => ({
+    model, size, qty: (cart[size] || 0) + 1,
+  }));
+  let unavailable = new Set();
+  if (isGuest) {
+    try {
+      const result = await checkGuestItems(candidates);
+      unavailable = new Set((result.unavailable || []).map((line) => `${line.model}|${line.size}`));
+    } catch (err) {
+      toast(friendlyError(err), true);
+      return;
+    }
+  }
+  let added = 0;
   for (const [size, avail] of Object.entries(p.stock)) {
     const cur = cart[size] || 0;
-    if (cur < avail) cart[size] = cur + 1;
+    if (cur < avail && !unavailable.has(`${model}|${size}`)) {
+      cart[size] = cur + 1;
+      if (isGuest) guestApprovedQty.set(`${model}|${size}`, cur + 1);
+      added++;
+    }
   }
   renderProducts();
   updateBadge();
-  toast(`נוספה סריה לדגם ${model}`);
+  toast(added ? `נוספה סריה לדגם ${model}` : `אין כרגע מלאי נוסף לדגם ${model}`, !added);
 }
 
 function openImg(model) {
@@ -579,6 +681,7 @@ function renderCart() {
         <input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="${Math.max(available, current)}"
                value="${current}" class="${current > 0 ? 'on' : ''}"
                aria-label="דגם ${esc(model)} מידה ${esc(s)}"
+               data-last-approved="${isGuest ? (guestApprovedQty.get(`${model}|${s}`) || 0) : current}"
                data-m="${esc(model)}" data-s="${esc(s)}">
       </label>`;
     }).join('');
@@ -612,8 +715,10 @@ function renderCart() {
     if (total) total.textContent = `${fmtNum(modelQty)} יח׳`;
     $('cartTotal').textContent = `סה״כ ${fmtNum(cartUnits())} יחידות`;
   };
-  box.onchange = (e) => {
-    if (!e.target.closest('input[data-m][data-s]')) return;
+  box.onchange = async (e) => {
+    const input = e.target.closest('input[data-m][data-s]');
+    if (!input) return;
+    await validateGuestInput(input);
     renderCart();
     renderProducts();
   };
@@ -625,6 +730,7 @@ function renderCart() {
 async function submitOrder() {
   if (state.submitting) return;
   showError('cartError', '');
+  if (isGuest && !(await validateGuestCartBeforeSubmit())) return;
 
   const items = [];
   for (const [model, sizes] of Object.entries(state.cart)) {
