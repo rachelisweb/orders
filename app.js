@@ -20,6 +20,7 @@ let myOrders = [];
 let myInvoices = new Map();          // order_id → [invoices]
 const GUEST_LINE_LIMIT = 999;        // לא חושף לאורח את כמות המלאי המדויקת
 const guestApprovedQty = new Map();  // הכמות האחרונה שהשרת אישר לכל דגם/מידה
+const guestValidationTimers = new Map();
 
 // ההזמנות שעדיין בטיפול מול אלה שכבר יצאו. ברגע שהמנהל מסמן
 // "נשלחה" ההזמנה עוברת מ"ממתינות" ל"היסטוריה".
@@ -485,11 +486,17 @@ function renderProducts() {
 
   list.oninput = (e) => {
     const inp = e.target.closest('input[data-m]');
-    if (inp) setQty(inp);
+    if (inp) {
+      setQty(inp);
+      scheduleGuestInputValidation(inp);
+    }
   };
   list.onchange = (e) => {
     const inp = e.target.closest('input[data-m][data-s]');
-    if (inp) validateGuestInput(inp);
+    if (inp) {
+      clearGuestValidationTimer(inp);
+      validateGuestInput(inp);
+    }
   };
   list.onclick = (e) => {
     const zoom = e.target.closest('[data-zoom]');
@@ -507,6 +514,36 @@ function setCartLine(model, size, qty) {
     if (!Object.keys(state.cart[model]).length) delete state.cart[model];
   }
   updateBadge();
+}
+
+function guestLineKey(inp) {
+  return `${inp.dataset.m}|${inp.dataset.s}`;
+}
+
+function clearGuestValidationTimer(inp) {
+  const key = guestLineKey(inp);
+  clearTimeout(guestValidationTimers.get(key));
+  guestValidationTimers.delete(key);
+}
+
+function scheduleGuestInputValidation(inp) {
+  if (!isGuest) return;
+  clearGuestValidationTimer(inp);
+  const key = guestLineKey(inp);
+  const timer = setTimeout(async () => {
+    guestValidationTimers.delete(key);
+    await validateGuestInput(inp);
+  }, 400);
+  guestValidationTimers.set(key, timer);
+}
+
+function refreshCartQuantitySummary(model) {
+  const box = $('cartItems');
+  if (!box) return;
+  const modelQty = Object.values(state.cart[model] || {}).reduce((sum, value) => sum + value, 0);
+  const total = box.querySelector(`[data-cart-model-total="${CSS.escape(model)}"]`);
+  if (total) total.textContent = `${fmtNum(modelQty)} יח׳`;
+  if ($('cartTotal')) $('cartTotal').textContent = `סה״כ ${fmtNum(cartUnits())} יחידות`;
 }
 
 async function checkGuestItems(items) {
@@ -539,6 +576,7 @@ async function validateGuestInput(inp) {
       inp.dataset.lastApproved = String(adjusted);
       inp.value = adjusted || '';
       inp.classList.toggle('on', adjusted > 0);
+      refreshCartQuantitySummary(model);
       toast(`דגם ${model} מידה ${size}: הכמות עודכנה למקסימום הזמין (${adjusted})`, true);
       return false;
     }
@@ -549,6 +587,7 @@ async function validateGuestInput(inp) {
     setCartLine(model, size, previous);
     inp.value = previous || '';
     inp.classList.toggle('on', previous > 0);
+    refreshCartQuantitySummary(model);
     toast(friendlyError(err), true);
     return false;
   } finally {
@@ -714,10 +753,12 @@ function renderCart() {
     const total = box.querySelector(`[data-cart-model-total="${CSS.escape(input.dataset.m)}"]`);
     if (total) total.textContent = `${fmtNum(modelQty)} יח׳`;
     $('cartTotal').textContent = `סה״כ ${fmtNum(cartUnits())} יחידות`;
+    scheduleGuestInputValidation(input);
   };
   box.onchange = async (e) => {
     const input = e.target.closest('input[data-m][data-s]');
     if (!input) return;
+    clearGuestValidationTimer(input);
     await validateGuestInput(input);
     renderCart();
     renderProducts();
