@@ -125,7 +125,7 @@ function loadReviewFixtures() {
     };
   };
   db.orders = [
-    mkOrder(121, 'pending', customerA, [['2413B', 'L', 1, 1, 200], ['2413B', 'XXL', 2, 2, 200], ['2420-1', 'M', 1, 1, 260]], 0, { checked_models: ['2413B'] }),
+    mkOrder(121, 'pending', customerA, [['2413B', 'L', 1, 1, 200], ['2413B', 'XXL', 2, 2, 200], ['2420-1', 'M', 1, 1, 260]], 0, { checked_models: ['2413B', '2420-1'] }),
     mkOrder(120, 'ready', customerA, [['2413B', 'M', 2, 2, 200], ['2420-1', 'S', 1, 1, 260], ['4036A', 'L', 3, 3, 213]], 1, { discount_type: 'pct', discount_value: 10 }),
     mkOrder(119, 'pending', customerB, [['2420-1', 'L', 2, 2, 145], ['4036A', 'XL', 1, 1, 126]], 2, { future: true, pricing_mode: 'cost' }),
     mkOrder(118, 'shipped', customerA, [['2413B', 'S', 3, 3, 200]], 3, { archived: true }),
@@ -1811,6 +1811,35 @@ async function saveDemandCustomerOrder(model, customerKeys) {
   }
 }
 
+async function toggleDemandModelChecks(model, orderIds, checked) {
+  const orders = orderIds.map((id) => db.orders.find((order) => order.id === id)).filter(Boolean);
+  if (!orders.length) {
+    toast('לא נמצאו הזמנות ממתינות לסימון', true);
+    return;
+  }
+
+  try {
+    const { data, error } = await sb.rpc('set_orders_model_checked', {
+      p_order_ids: orders.map((order) => order.id),
+      p_model: model,
+      p_checked: checked,
+    });
+    if (error) throw error;
+
+    for (const order of orders) {
+      const values = new Set(order.checked_models || []);
+      if (checked) values.add(model); else values.delete(model);
+      order.checked_models = [...values];
+    }
+
+    toast(`${checked ? 'הדגם סומן' : 'הסימון הוסר'} ב-${fmtNum(data?.updated || orders.length)} הזמנות`);
+    openDemandDetail(model);
+  } catch (err) {
+    toast(friendlyError(err), true);
+    openDemandDetail(model);
+  }
+}
+
 // מי הזמין דגם מסוים, וכמה — הבסיס גם למסך הפירוט וגם לגיליון הייצוא
 function demandBreakdown(model) {
   const rows = new Map();
@@ -1821,11 +1850,14 @@ function demandBreakdown(model) {
     let e = rows.get(key);
     if (!e) {
       e = {
+        order_id: o.id,
         order_number: o.order_number,
         customer_key: o.customer_id || `name:${o.customers?.business_name || o.customers?.name || o.contact_name || '—'}`,
         customer: o.customers?.business_name || o.customers?.name || o.contact_name || '—',
         date: o.created_at,
         status: o.status,
+        model_checkable: o.status === 'pending' && !o.stock_applied,
+        model_checked: (o.checked_models || []).includes(model),
         sizes: {}, total: 0, amount: 0,
       };
       rows.set(key, e);
@@ -1850,10 +1882,17 @@ function openDemandDetail(model) {
   for (const r of rows) {
     let e = byCust.get(r.customer_key);
     if (!e) {
-      e = { customer_key: r.customer_key, customer: r.customer, orders: 0, sizes: {}, total: 0, amount: 0 };
+      e = {
+        customer_key: r.customer_key, customer: r.customer, orders: 0,
+        sizes: {}, total: 0, amount: 0, checkable_order_ids: [], checked_order_ids: [],
+      };
       byCust.set(r.customer_key, e);
     }
     e.orders++;
+    if (r.model_checkable) {
+      e.checkable_order_ids.push(r.order_id);
+      if (r.model_checked) e.checked_order_ids.push(r.order_id);
+    }
     for (const [s, q] of Object.entries(r.sizes)) e.sizes[s] = (e.sizes[s] || 0) + q;
     e.total += r.total;
     e.amount += r.amount;
@@ -1882,13 +1921,27 @@ function openDemandDetail(model) {
         ${cols.map((s) => `<th class="num">${esc(s)}</th>`).join('')}
         <th class="num">סה״כ</th><th class="num">שווי</th>
       </tr></thead><tbody id="demandCustomerRows">
-      ${custRows.map((r) => `<tr data-sort-key="${esc(r.customer_key)}" title="לחיצה ארוכה וגרירה לשינוי הסדר">
-        ${td('לקוח', `<span class="demand-row-grip" aria-hidden="true">⠿</span>${esc(r.customer)}`, 'bold')}
+      ${custRows.map((r) => {
+        const allChecked = r.checkable_order_ids.length > 0
+          && r.checked_order_ids.length === r.checkable_order_ids.length;
+        const partlyChecked = r.checked_order_ids.length > 0 && !allChecked;
+        const checkLabel = allChecked ? 'הסר סימון דגם' : 'סמן דגם';
+        const check = r.checkable_order_ids.length ? `<button type="button"
+          class="demand-model-check ${allChecked ? 'checked' : ''} ${partlyChecked ? 'partial' : ''}"
+          data-demand-model-check="${esc(model)}"
+          data-order-ids="${r.checkable_order_ids.join(',')}"
+          data-next-checked="${!allChecked}"
+          role="checkbox" aria-checked="${partlyChecked ? 'mixed' : allChecked}"
+          aria-label="${checkLabel} ${esc(model)} בהזמנות של ${esc(r.customer)}"
+          title="${checkLabel} בתוך ${r.checkable_order_ids.length === 1 ? 'ההזמנה' : `${r.checkable_order_ids.length} ההזמנות`}">${allChecked ? '✓' : partlyChecked ? '—' : ''}</button>` : '';
+        return `<tr class="${allChecked ? 'models-checked' : partlyChecked ? 'models-partial' : ''}"
+          data-sort-key="${esc(r.customer_key)}" title="לחיצה ארוכה וגרירה לשינוי הסדר">
+        ${td('לקוח', `<span class="demand-customer-main"><span class="demand-row-grip" aria-hidden="true">⠿</span>${check}<span>${esc(r.customer)}</span></span>`, 'bold')}
         ${td('הזמנות', r.orders, 'num')}
         ${cols.map((s) => td(s, r.sizes[s] || '<span class="faint">·</span>', 'num')).join('')}
         ${td('סה״כ', fmtNum(r.total), 'num bold')}
         ${td('שווי', r.amount > 0 ? fmtMoney(r.amount) : '—', 'num')}
-      </tr>`).join('')}
+      </tr>`; }).join('')}
       </tbody></table>
     </div>
 
@@ -4483,7 +4536,7 @@ function wire() {
       '[data-del-order-panel]', '[data-del-return-panel]', '[data-credit]', '[data-credit-panel]',
       '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
       '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
-      '[data-resend-shipped]', '[data-model-check]',
+      '[data-resend-shipped]', '[data-model-check]', '[data-demand-model-check]',
       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave',
@@ -4754,6 +4807,17 @@ function wire() {
     if (modelCheck) {
       const [orderId, model] = modelCheck.dataset.modelCheck.split('|');
       await toggleOrderModelCheck(orderId, model, modelCheck.getAttribute('aria-pressed') !== 'true');
+      return;
+    }
+    const demandModelCheck = e.target.closest('[data-demand-model-check]');
+    if (demandModelCheck) {
+      const orderIds = demandModelCheck.dataset.orderIds.split(',').filter(Boolean);
+      demandModelCheck.disabled = true;
+      await toggleDemandModelChecks(
+        demandModelCheck.dataset.demandModelCheck,
+        orderIds,
+        demandModelCheck.dataset.nextChecked === 'true',
+      );
       return;
     }
     const addOrderModel = e.target.closest('[data-add-order-model]');

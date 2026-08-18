@@ -908,14 +908,25 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   box-shadow: var(--shadow-lg);
   opacity: .88;
 }
+.demand-customer-table tbody tr.models-checked { background: #ecfdf5; }
+.demand-customer-table tbody tr.models-partial { background: #fffbeb; }
+.demand-customer-main { display: inline-flex; align-items: center; gap: .45rem; }
 .demand-row-grip {
   display: inline-block;
-  margin-inline-end: .45rem;
   color: var(--border-2);
   font-size: 1.15rem;
   line-height: 1;
   vertical-align: middle;
 }
+.demand-model-check {
+  width: 28px; height: 28px; min-height: 28px; flex: 0 0 28px; padding: 0;
+  border: 2px solid var(--border-2); border-radius: 7px;
+  background: var(--surface); color: white; font-size: 1rem; font-weight: 900;
+  line-height: 1;
+}
+.demand-model-check.checked { background: var(--success); border-color: var(--success); }
+.demand-model-check.partial { background: var(--warn); border-color: var(--warn); color: #78350f; }
+.demand-model-check:disabled { opacity: .6; cursor: wait; }
 
 @media (max-width: 780px) {
   .demand-sort-hint { max-width: 52%; text-align: end; }
