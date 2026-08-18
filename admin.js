@@ -340,6 +340,10 @@ function filteredItems() {
 const isWaitingForInvoice = (o) =>
   !isArchived(o) && ['ready', 'shipped'].includes(o.status) && !hasInvoice(o.id);
 
+// הזמנה מוכנה עם חשבונית מחכה רק למשלוח, ולכן אינה מופיעה גם בקבוצת החשבוניות.
+const isWaitingToShip = (o) =>
+  !isArchived(o) && o.status === 'ready' && hasInvoice(o.id);
+
 // כרטיס "דורש טיפול" — משימות פתוחות בלבד, בראש הדשבורד.
 function renderActionCard() {
   const live    = db.orders.filter((o) => !isArchived(o));
@@ -347,11 +351,12 @@ function renderActionCard() {
     .filter((o) => o.status === 'pending' && !o.future_order_at)
     .sort((a, b) => Number(b.pending_position || 0) - Number(a.pending_position || 0)));
   const toInv   = db.orders.filter(isWaitingForInvoice);
+  const toShip  = db.orders.filter(isWaitingToShip);
   const openRet = db.returns.filter((r) => r.status === 'pending');
   const box = $('pendingList');
 
-  if (!pending.length && !toInv.length && !openRet.length) {
-    box.innerHTML = '<div class="empty"><div class="ico">🎉</div>הכל מטופל — אין הזמנות או חזרות ממתינות</div>';
+  if (!pending.length && !toInv.length && !toShip.length && !openRet.length) {
+    box.innerHTML = '<div class="empty"><div class="ico">🎉</div>הכל מטופל — אין משימות ממתינות</div>';
     $('actionCard').classList.remove('urgent');
     return;
   }
@@ -398,6 +403,7 @@ function renderActionCard() {
   box.innerHTML =
       group('⏳ ממתינות לאישור', pending, 'ready', 'amber')
     + group('🧾 ממתינות להעלאת חשבונית', toInv, 'invoice', 'violet')
+    + group('🚚 ממתינות למשלוח', toShip, 'shipped', 'blue')
     + returnsGroup;
 
   box.onclick = async (e) => {
@@ -435,10 +441,12 @@ function renderDash() {
   const moneyFoot = from ? `מ-${fmtDate(from, false)}` : 'כל התקופה';
   const pending = orders.filter((o) => o.status === 'pending' && !o.future_order_at && !isArchived(o)).length;
   const waitingForInvoice = db.orders.filter(isWaitingForInvoice).length;
+  const waitingToShip = db.orders.filter(isWaitingToShip).length;
 
   $('kpis').innerHTML = [
     ['הזמנות ממתינות',          fmtNum(pending),           'ממתינות לאישור',                   pending ? 'warn' : 'green'],
     ['ממתינות להעלאת חשבונית',  fmtNum(waitingForInvoice), 'מוכנות או נשלחו, ללא ארכיון',      waitingForInvoice ? 'violet' : 'green'],
+    ['ממתינות למשלוח',           fmtNum(waitingToShip),      'מוכנות עם חשבונית, טרם נשלחו',    waitingToShip ? 'accent' : 'green'],
     ['מחזור',                   fmtMoney(revenue),         moneyFoot,                           'green'],
     ['רווח',                    fmtMoney(revenue - cost),  cost > 0 ? moneyFoot : 'חסרים מחירי עלות', cost > 0 ? 'green' : 'warn'],
   ].map(([label, value, foot, cls]) => `
@@ -447,30 +455,6 @@ function renderDash() {
       <div class="value ${String(value).length > 8 ? 'sm' : ''}">${esc(value)}</div>
       <div class="foot">${esc(foot)}</div>
     </div>`).join('');
-
-  // דגמים מובילים
-  const byM = new Map();
-  for (const it of items) {
-    const e = byM.get(it.model) || { model: it.model, qty: 0 };
-    e.qty += it.qty;
-    byM.set(it.model, e);
-  }
-  const top = [...byM.values()].sort((a, b) => b.qty - a.qty);
-  const max = top[0]?.qty || 1;
-
-  $('topModels').innerHTML = top.length
-    ? top.slice(0, 15).map((m) => {
-        const p = productByModel(m.model);
-        return `<div class="bar-row">
-          ${p?.image_url
-            ? `<img class="thumb" style="width:30px;height:30px" src="${esc(img(p.image_url, 80))}" alt="" loading="lazy" decoding="async">`
-            : '<div class="thumb img-ph" style="width:30px;height:30px">📷</div>'}
-          <span class="nm">${esc(m.model)}</span>
-          <div class="bar-track"><div class="bar-fill" style="width:${(m.qty / max * 100).toFixed(1)}%"></div></div>
-          <span class="vl">${fmtNum(m.qty)}</span>
-        </div>`;
-      }).join('')
-    : '<div class="empty">אין נתונים</div>';
 
   // לקוחות
   const byC = new Map();
@@ -4831,8 +4815,6 @@ function wire() {
     await exportXlsx('חשבוניות', [{ name: 'חשבוניות', rows }]);
     toast('הקובץ יורד…');
   });
-  on('exportTop', 'click', () => exportCsv('דגמים_מובילים', demandRows()));
-
   // ── האזנה מרוכזת ──
   document.addEventListener('click', async (e) => {
     const close = e.target.closest('[data-close]');
