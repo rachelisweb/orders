@@ -1810,11 +1810,29 @@ function makeLongPressSortable(container, onDrop, delay = 320) {
 
     if (row.tagName === 'TR') {
       const table = document.createElement('table');
-      table.className = `${row.closest('table')?.className || ''} longpress-drag-ghost longpress-drag-ghost-table`;
+      table.className = `${row.closest('table')?.className || ''} longpress-drag-ghost-table`;
       const tbody = document.createElement('tbody');
+      [...row.children].forEach((cell, index) => {
+        const cloneCell = clone.children[index];
+        if (!cloneCell) return;
+        const cellRect = cell.getBoundingClientRect();
+        const display = getComputedStyle(cell).display;
+        cloneCell.style.display = display;
+        if (display !== 'none') {
+          cloneCell.style.boxSizing = 'border-box';
+          cloneCell.style.width = `${cellRect.width}px`;
+          cloneCell.style.minWidth = `${cellRect.width}px`;
+          cloneCell.style.maxWidth = `${cellRect.width}px`;
+        }
+      });
       tbody.appendChild(clone);
       table.appendChild(tbody);
-      ghost = table;
+      table.style.width = `${rect.width}px`;
+      table.style.height = `${rect.height}px`;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'longpress-drag-ghost longpress-drag-ghost-row';
+      wrapper.appendChild(table);
+      ghost = wrapper;
     } else {
       clone.classList.add('longpress-drag-ghost');
       ghost = clone;

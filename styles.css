@@ -947,7 +947,7 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   pointer-events: none !important;
   margin: 0 !important;
   opacity: .96;
-  transform: scale(1.018) rotate(-.25deg);
+  transform: rotate(-.25deg);
   transform-origin: center;
   border-color: var(--accent) !important;
   outline: 2px solid color-mix(in srgb, var(--accent) 42%, transparent);
@@ -957,16 +957,20 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
 }
 .longpress-drag-ghost-table {
   display: table !important;
+  width: 100%;
+  height: 100%;
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
+  background: var(--surface);
+}
+.longpress-drag-ghost-row {
   overflow: hidden;
   border-radius: 10px;
   background: var(--surface);
 }
 .longpress-drag-ghost-table tbody { display: table-row-group; }
 .longpress-drag-ghost-table tr { display: table-row; background: var(--surface); }
-.longpress-drag-ghost-table td { display: table-cell; }
 .sort-drop-before { position: relative; }
 .admin-order-model.sort-drop-before::before,
 .admin-order-model.sort-drop-after::after {
