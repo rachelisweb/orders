@@ -924,7 +924,9 @@ function renderOrders() {
       Number(b.pending_position || 0) - Number(a.pending_position || 0)
       || new Date(b.created_at) - new Date(a.created_at));
   } else if (orderStatusTab === 'future') {
-    orders = orders.sort((a, b) => new Date(b.future_order_at || b.created_at) - new Date(a.future_order_at || a.created_at));
+    orders = orders.sort((a, b) =>
+      Number(b.pending_position || 0) - Number(a.pending_position || 0)
+      || new Date(b.future_order_at || b.created_at) - new Date(a.future_order_at || a.created_at));
   } else if (orderStatusTab === 'archive') {
     orders = orders.sort((a, b) => new Date(b.archived_at || b.created_at) - new Date(a.archived_at || a.created_at));
   }
@@ -941,6 +943,7 @@ function renderOrders() {
   const archiveView   = orderStatusTab === 'archive';
   const cancelledView = orderStatusTab === 'cancelled';
   const pendingView   = orderStatusTab === 'pending';
+  const sortableView  = pendingView || futureView;
   const archivable    = orders.filter(canArchive);
 
   if (archiveView && archiveSearch) {
@@ -1007,15 +1010,15 @@ function renderOrders() {
        <button class="btn ghost sm" id="archiveBucket">🗄️ העבר את כל ${fmtNum(archivable.length)} ההזמנות בלשונית לארכיון</button>
      </div>` : ''}
     ${!orders.length ? `<div class="empty"><div class="ico">${meta.icon}</div>
-       ${archiveSearch ? 'לא נמצאו הזמנות התואמות לחיפוש' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : `<div class="table-wrap"><table class="responsive"><thead><tr>
+       ${archiveSearch ? 'לא נמצאו הזמנות התואמות לחיפוש' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : `<div class="table-wrap"><table class="responsive${sortableView ? ' order-sort-table' : ''}"><thead><tr>
       <th>#</th><th>לקוח</th><th>תאריך</th><th class="num">יח׳</th>
       <th class="num">סכום</th>${archiveView ? '<th>סטטוס</th>' : ''}<th class="num">🧾</th><th></th>
-    </tr></thead><tbody>
+    </tr></thead><tbody${sortableView ? ' id="ordersRows"' : ''}>
     ${visibleOrders.map((o) => {
       const next = ORDER_STATUS[o.status].next;
       const nInv = db.invoices.filter((v) => v.order_id === o.id).length;
       const note = db.orderNotes[o.id];
-      return `<tr class="clickable" data-order="${o.id}">
+      return `<tr class="clickable" data-order="${o.id}"${sortableView ? ` data-sort-key="${o.id}"` : ''}>
       ${td('הזמנה', `#${o.order_number}${note ? ' <span title="יש הערת מנהל">📝</span>' : ''} ${splitOrderChip(o)}`, 'bold')}
       ${td('לקוח', esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—'))}
       ${td('תאריך', fmtDate(o.created_at, false), 'small nowrap')}
@@ -1057,6 +1060,10 @@ function renderOrders() {
 
   on('futureCollectionsSave', 'click', saveFutureCollections);
   on('releaseFutureOrders', 'click', releaseFutureOrders);
+
+  if (sortableView) {
+    makeLongPressSortable($('ordersRows'), (orderIds) => saveOrderBucketOrder(orderStatusTab, orderIds));
+  }
 
   $('ordersTable').onclick = async (e) => {
     const future = e.target.closest('[data-future-order]');
@@ -1256,6 +1263,33 @@ function groupOrderItemsByModel(lines) {
     groups.get(line.model).lines.push(line);
   }
   return [...groups.values()];
+}
+
+async function saveOrderBucketOrder(bucket, orderIds) {
+  if (!['pending', 'future'].includes(bucket) || !orderIds.length) return;
+  const previous = new Map(db.orders.map((order) => [order.id, order.pending_position]));
+  const total = orderIds.length;
+  orderIds.forEach((id, index) => {
+    const order = db.orders.find((item) => item.id === id);
+    if (order) order.pending_position = total - index;
+  });
+
+  try {
+    if (!MOCK_REVIEW) {
+      const { error } = await sb.rpc('set_order_bucket_order', {
+        p_bucket: bucket,
+        p_order_ids: orderIds,
+      });
+      if (error) throw error;
+    }
+    toast('סדר ההזמנות נשמר');
+  } catch (err) {
+    db.orders.forEach((order) => {
+      if (previous.has(order.id)) order.pending_position = previous.get(order.id);
+    });
+    toast(friendlyError(err), true);
+    renderOrders();
+  }
 }
 
 function sortOrderItemGroups(groups, savedOrder = []) {
@@ -1782,6 +1816,7 @@ function makeLongPressSortable(container, onDrop, delay = 320) {
   let ghostOffsetY = 0;
   let orderBefore = '';
   let lastTouchAt = 0;
+  let suppressClickUntil = 0;
 
   const directRows = () => $$('[data-sort-key]', container)
     .filter((row) => row.parentElement === container);
@@ -1902,6 +1937,9 @@ function makeLongPressSortable(container, onDrop, delay = 320) {
       const rect = scroller.getBoundingClientRect();
       if (y < rect.top + 54) scroller.scrollTop -= 14;
       else if (y > rect.bottom - 54) scroller.scrollTop += 14;
+    } else {
+      if (y < 70) window.scrollBy(0, -14);
+      else if (y > window.innerHeight - 70) window.scrollBy(0, 14);
     }
   };
 
@@ -1909,6 +1947,7 @@ function makeLongPressSortable(container, onDrop, delay = 320) {
     clearTimer();
     if (!pressed) return;
     const dragged = pressed;
+    const wasActive = active;
     const changed = active && ids().join('\n') !== orderBefore;
     pressed = null;
     active = false;
@@ -1916,8 +1955,15 @@ function makeLongPressSortable(container, onDrop, delay = 320) {
     container.classList.remove('longpress-sort-active');
     clearLanding();
     removeGhost();
+    if (wasActive) suppressClickUntil = Date.now() + 450;
     if (changed) await onDrop(ids());
   };
+
+  container.addEventListener('click', (event) => {
+    if (Date.now() >= suppressClickUntil) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
 
   container.addEventListener('touchstart', (event) => {
     if (event.touches.length !== 1) return;
