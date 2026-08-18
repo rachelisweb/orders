@@ -125,6 +125,7 @@ function loadReviewFixtures() {
     };
   };
   db.orders = [
+    mkOrder(122, 'ready', customerB, [['2413B', 'S', 1, 1, 118]], 0, { pricing_mode: 'cost' }),
     mkOrder(121, 'pending', customerA, [['2413B', 'L', 1, 1, 200], ['2413B', 'XXL', 2, 2, 200], ['2420-1', 'M', 1, 1, 260]], 0, { checked_models: ['2413B', '2420-1'] }),
     mkOrder(120, 'ready', customerA, [['2413B', 'M', 2, 2, 200], ['2420-1', 'S', 1, 1, 260], ['4036A', 'L', 3, 3, 213]], 1, { discount_type: 'pct', discount_value: 10 }),
     mkOrder(119, 'pending', customerB, [['2420-1', 'L', 2, 2, 145], ['4036A', 'XL', 1, 1, 126]], 2, { future: true, pricing_mode: 'cost' }),
@@ -1371,6 +1372,7 @@ function openOrder(id) {
   const itemGroups = sortOrderItemGroups(groupOrderItemsByModel(lines), o.model_order);
   const invs = db.invoices.filter((v) => v.order_id === o.id);
   const editable = o.status === 'pending' && !o.stock_applied;
+  const canAddItems = (editable || (o.status === 'ready' && o.stock_applied)) && !isArchived(o);
   const checkedModels = itemGroups
     .map((group) => group.model)
     .filter((model) => (o.checked_models || []).includes(model));
@@ -1456,7 +1458,8 @@ function openOrder(id) {
 
     ${renderAdminOrderItems(itemGroups, editable, anyShort, o.checked_models, o.id)}
 
-    ${editable ? `<button class="btn ghost block add-order-model-btn" data-add-order-model="${o.id}">➕ הוספת דגם להזמנה</button>` : ''}
+    ${canAddItems ? `<button class="btn ghost block add-order-model-btn" data-add-order-model="${o.id}"
+      ${o.status === 'ready' && invs.length ? 'disabled title="לא ניתן להוסיף פריטים לאחר שנשמר מסמך להזמנה"' : ''}>➕ הוספת פריטים להזמנה</button>` : ''}
 
     <h4 class="bold" style="margin-bottom:.5rem">מסמכים (${invs.length})</h4>
     ${invs.length
@@ -1689,13 +1692,19 @@ async function splitCheckedOrder(orderId) {
 
 function openAddOrderModel(orderId) {
   const order = db.orders.find((item) => item.id === orderId);
-  if (!order || order.status !== 'pending' || order.stock_applied) {
-    toast('ניתן להוסיף דגמים רק להזמנה ממתינה', true);
+  const pendingOrder = order?.status === 'pending' && !order.stock_applied;
+  const readyOrder = order?.status === 'ready' && order.stock_applied && !isArchived(order);
+  if (!order || (!pendingOrder && !readyOrder)) {
+    toast('ניתן להוסיף פריטים רק להזמנה ממתינה או מוכנה לאיסוף', true);
+    return;
+  }
+  if (readyOrder && db.invoices.some((invoice) => invoice.order_id === orderId && invoice.status !== 'cancelled')) {
+    toast('לא ניתן להוסיף פריטים לאחר שנשמר מסמך להזמנה', true);
     return;
   }
 
-  modal(`הוספת דגם להזמנה #${order.order_number}`, `
-    <div class="note small">הקלד מספר דגם, בחר כמויות ולחץ על הוספה. הכמות מתווספת לכמות שכבר קיימת בהזמנה.</div>
+  modal(`הוספת פריטים להזמנה #${order.order_number}`, `
+    <div class="note small">הקלד מספר דגם, בחר כמויות ולחץ על הוספה. דגם ומידה שכבר קיימים יתעדכנו באותה שורה.${readyOrder ? ' הכמות שתתווסף תרד מיד מהמלאי.' : ''}</div>
     <div class="field"><label for="addOrderModelSearch">חיפוש דגם</label>
       <input type="search" id="addOrderModelSearch" autocomplete="off" placeholder="לדוגמה: 2420"></div>
     <div id="addOrderModelResults"><div class="empty"><div class="ico">🔍</div>הקלד מספר דגם לחיפוש</div></div>

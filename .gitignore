@@ -46,6 +46,7 @@
 !/v2/supabase/migrations/20260818220000_order_bucket_order.sql
 !/v2/supabase/migrations/20260818223000_fix_order_bucket_order.sql
 !/v2/supabase/migrations/20260819090000_custom_order_prices_and_icount_refunds.sql
+!/v2/supabase/migrations/20260819110000_ready_order_add_items.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/
