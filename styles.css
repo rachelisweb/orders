@@ -1256,6 +1256,27 @@ tr.short td, tr.short { background: #fffbeb; }
   padding: .75rem; border: 1px solid #bfdbfe; border-radius: var(--r); background: #eff6ff;
 }
 .invoice-document-options .field { margin: 0; }
+.icount-cheques {
+  display: flex; flex-direction: column; gap: .55rem;
+}
+.icount-cheque-row {
+  display: grid; grid-template-columns: auto repeat(6, minmax(74px, 1fr)) auto;
+  align-items: end; gap: .45rem; padding: .65rem;
+  border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2);
+}
+.icount-cheque-row label { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.icount-cheque-row label > span { font-size: .74rem; color: var(--muted); font-weight: 700; }
+.icount-cheque-row input { width: 100%; min-width: 0; }
+.custom-price-list { display: flex; flex-direction: column; gap: .5rem; }
+.custom-price-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(130px, .45fr);
+  gap: .7rem; align-items: center; padding: .7rem;
+  border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2);
+}
+.custom-price-row > span:first-child { display: flex; flex-direction: column; min-width: 0; }
+.custom-price-row small { color: var(--muted); }
+.custom-price-input { display: flex; flex-direction: row-reverse; align-items: center; gap: .35rem; }
+.custom-price-input input { width: 100%; min-width: 0; }
 .invoice-preview-head {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem;
   padding: .75rem; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2);
@@ -1339,6 +1360,10 @@ td.pick, th.pick { width: 38px; text-align: center; }
   .responsive td.pick { justify-content: flex-start; }
   .archive-tools { grid-template-columns: 1fr; }
   .invoice-document-options { grid-template-columns: 1fr; }
+  .icount-cheque-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .icount-cheque-row > .chip { justify-self: start; }
+  .custom-price-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .custom-price-input { grid-column: 1 / -1; }
   .invoice-preview-head { grid-template-columns: 1fr; }
   .flex-invoice-line { grid-template-columns: 1fr 1fr; }
   .flex-description-field { grid-column: 1 / -1; }

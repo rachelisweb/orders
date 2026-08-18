@@ -55,7 +55,7 @@ function recordValues(value: unknown) {
   ));
 }
 
-const PAYMENT_WITH_EXTRA_DETAILS = new Set(['cc', 'cheques', 'paypal']);
+const PAYMENT_WITH_EXTRA_DETAILS = new Set(['cc', 'paypal']);
 
 async function loadIcountCapabilities(token: string) {
   const [typesResult, paymentsResult, bankAccountsResult] = await Promise.all([
@@ -160,6 +160,7 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
   let orderId = '';
+  let returnId = '';
   let flexibleRequestId = '';
   let externalCreated = false;
   let externalDocnum = '';
@@ -172,7 +173,7 @@ Deno.serve(async (req) => {
     if (profile?.role !== 'admin') return jsonResponse({ ok: false, error: 'הפקת חשבונית מותרת למנהל בלבד' }, 403);
 
     const body = await req.json();
-    if (!['health', 'preview', 'create', 'flexible_preview', 'flexible_create'].includes(body?.action)) {
+    if (!['health', 'preview', 'create', 'refund_preview', 'refund_create', 'flexible_preview', 'flexible_create'].includes(body?.action)) {
       return jsonResponse({ ok: false, error: 'action לא חוקי' }, 400);
     }
 
@@ -186,6 +187,228 @@ Deno.serve(async (req) => {
         mode: 'read_only',
         invoice_type_available: capabilities.doctypes.some((item) => item.code === 'invoice'),
         ...capabilities,
+      });
+    }
+
+    if (body.action === 'refund_preview' || body.action === 'refund_create') {
+      returnId = String(body?.return_id || '');
+      if (!returnId) return jsonResponse({ ok: false, error: 'חסר return_id' }, 400);
+
+      const { data: returnRow, error: returnError } = await service.from('returns')
+        .select('*').eq('id', returnId).single();
+      if (returnError || !returnRow) return jsonResponse({ ok: false, error: 'החזרה לא נמצאה' }, 404);
+      if (returnRow.status !== 'pending') {
+        return jsonResponse({ ok: false, error: 'ניתן להפיק חשבונית זיכוי רק לחזרה ממתינה' }, 409);
+      }
+      if (!returnRow.customer_id) {
+        return jsonResponse({ ok: false, error: 'יש לשייך את החזרה לכרטיס לקוח לפני הפקת הזיכוי' }, 409);
+      }
+
+      const { data: existingRefund } = await service.from('invoices')
+        .select('id, invoice_number, file_path')
+        .eq('return_id', returnId).neq('status', 'cancelled').limit(1).maybeSingle();
+      if (existingRefund) {
+        if (body.action === 'refund_create') {
+          return jsonResponse({
+            ok: true, reused: true, invoice_number: existingRefund.invoice_number,
+            invoice_id: existingRefund.id, doctype: 'refund', document_title: 'חשבונית זיכוי',
+          });
+        }
+        return jsonResponse({ ok: false, error: 'כבר קיימת חשבונית זיכוי לחזרה זו', invoice: existingRefund }, 409);
+      }
+
+      const [{ data: customer, error: customerError }, { data: returnItems, error: itemsError }] = await Promise.all([
+        service.from('customers').select('*').eq('id', returnRow.customer_id).single(),
+        service.from('return_items').select('*').eq('return_id', returnId),
+      ]);
+      if (customerError || !customer) return jsonResponse({ ok: false, error: 'כרטיס הלקוח של החזרה לא נמצא' }, 409);
+      if (itemsError) throw itemsError;
+      if (!returnItems?.length) return jsonResponse({ ok: false, error: 'אין פריטים בחזרה' }, 409);
+
+      const productIds = [...new Set(returnItems.map((item: any) => item.product_id).filter(Boolean))];
+      const { data: products, error: productsError } = productIds.length
+        ? await service.from('products').select('id, model, description, wholesale_price, cost_price').in('id', productIds)
+        : { data: [], error: null };
+      if (productsError) throw productsError;
+      const productsById = new Map<string, any>();
+      for (const product of products || []) productsById.set(product.id, product);
+
+      const returnDateEnd = `${String(returnRow.return_date || israelToday()).slice(0, 10)}T23:59:59.999Z`;
+      const { data: priorOrders, error: priorOrdersError } = await service.from('orders')
+        .select('created_at, subtotal_amount, discount_amount, order_items(model, unit_price)')
+        .eq('customer_id', customer.id)
+        .in('status', ['ready', 'shipped'])
+        .lte('created_at', returnDateEnd)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (priorOrdersError) throw priorOrdersError;
+
+      const priceForModel = (model: string, product: any) => {
+        for (const prior of priorOrders || []) {
+          const matching = (prior.order_items || []).find((item: any) => item.model === model && Number(item.unit_price) > 0);
+          if (!matching) continue;
+          const subtotal = Number(prior.subtotal_amount || 0);
+          const discount = Math.min(Math.max(Number(prior.discount_amount || 0), 0), subtotal);
+          return round2(Number(matching.unit_price) * (subtotal > 0 ? (subtotal - discount) / subtotal : 1));
+        }
+        const base = Number(customer.price_at_cost ? product?.cost_price : product?.wholesale_price);
+        if (!Number.isFinite(base) || base <= 0) return 0;
+        const discountPct = customer.price_at_cost ? 0 : Math.min(Math.max(Number(customer.discount_pct || 0), 0), 100);
+        return round2(base * (1 - discountPct / 100));
+      };
+
+      const grouped = new Map<string, any>();
+      for (const item of returnItems) {
+        const quantity = Number(item.qty || 0);
+        if (quantity <= 0) continue;
+        const model = String(item.model || '').trim();
+        const product: any = productsById.get(item.product_id);
+        const unitprice = priceForModel(model, product);
+        if (!model || unitprice <= 0) {
+          return jsonResponse({ ok: false, error: `לא נמצא מחיר לזיכוי עבור הדגם ${model || 'ללא מספר'}` }, 409);
+        }
+        const key = `${model}\u0000${unitprice.toFixed(2)}`;
+        if (!grouped.has(key)) grouped.set(key, {
+          sku: model,
+          description: product?.description || model,
+          quantity: 0,
+          unitprice,
+        });
+        grouped.get(key).quantity += quantity;
+      }
+      const lines = [...grouped.values()];
+      if (!lines.length) return jsonResponse({ ok: false, error: 'אין פריטים שניתן לזכות' }, 409);
+
+      const subtotal = round2(lines.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
+      const vat = round2(subtotal * VAT_PERCENT / 100);
+      const totalWithVat = round2(subtotal + vat);
+      const clientName = customer.business_name || customer.name || returnRow.returner_name;
+      const docDate = israelToday();
+      const fingerprint = await sha256({
+        return_id: returnId, customer_id: customer.id, clientName, lines, subtotal, vat: VAT_PERCENT, docDate,
+      });
+      const preview = {
+        lines, subtotal, vat, total_with_vat: totalWithVat, doc_date: docDate,
+        doctype: 'refund', document_title: 'חשבונית זיכוי', client_name: clientName,
+        tax_id: customer.tax_id || '', return_number: returnRow.return_number,
+      };
+      if (body.action === 'refund_preview') return jsonResponse({ ok: true, preview, fingerprint });
+
+      const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
+      if (!token) return jsonResponse({ ok: false, error: 'ICOUNT_API_TOKEN לא הוגדר בפונקציית השרת' }, 503);
+      const capabilities = await loadIcountCapabilities(token);
+      if (!capabilities.doctypes.some((item) => item.code === 'refund')) {
+        return jsonResponse({ ok: false, error: 'חשבונית זיכוי אינה זמינה בחשבון iCount' }, 409);
+      }
+
+      const sanity = `rcl-ret-${returnRow.return_number}-${returnId.replace(/-/g, '').slice(0, 8)}`.slice(0, 30);
+      const { data: claim, error: claimError } = await service.rpc('claim_icount_refund_generation', {
+        p_return_id: returnId, p_fingerprint: fingerprint, p_sanity_string: sanity,
+      });
+      if (claimError) throw claimError;
+      if (!claim?.claimed) {
+        if (claim?.status === 'succeeded') {
+          return jsonResponse({ ok: true, reused: true, invoice_number: claim.docnum, doctype: 'refund', document_title: 'חשבונית זיכוי' });
+        }
+        if (claim?.status === 'processing') {
+          return jsonResponse({ ok: false, error: 'הפקת חשבונית הזיכוי כבר מתבצעת. יש להמתין ולרענן.' }, 409);
+        }
+        return jsonResponse({ ok: false, error: claim?.error || 'ההפקה נעצרה לבדיקה ידנית כדי למנוע מסמך כפול' }, 409);
+      }
+
+      const { data: generation } = await service.from('icount_refund_generations')
+        .select('*').eq('return_id', returnId).single();
+      externalDocnum = generation?.external_docnum || '';
+      let docUrl = generation?.external_url || '';
+      if (!externalDocnum) {
+        let created: any;
+        try {
+          created = await icountCall(token, 'doc/create', {
+            doctype: 'refund',
+            custom_client_id: customer.id,
+            vat_id: String(customer.tax_id || '').replace(/\D/g, '') || undefined,
+            email: customer.email || undefined,
+            client_name: clientName,
+            client_address: [customer.address, customer.city].filter(Boolean).join(', ') || undefined,
+            doc_date: docDate,
+            currency_code: 'ILS',
+            vat_percent: VAT_PERCENT,
+            items: lines.map((item) => ({
+              sku: item.sku,
+              description: item.description,
+              quantity: item.quantity,
+              unitprice: item.unitprice,
+            })),
+            hwc: `זיכוי עבור חזרה #${returnRow.return_number}`,
+            sanity_string: sanity,
+            doc_lang: 'he',
+            send_email: false,
+            send_sms: false,
+          });
+        } catch (error) {
+          if (String((error as any)?.code || (error as Error).message).includes('doc_exists_based_on_sanity_string')) {
+            await service.from('icount_refund_generations').update({
+              status: 'needs_review', error: 'iCount דיווח שחשבונית הזיכוי כבר קיימת, אך מספרה לא נשמר. נדרשת בדיקה ידנית.', updated_at: new Date().toISOString(),
+            }).eq('return_id', returnId);
+          }
+          throw error;
+        }
+        externalDocnum = String(deepFind(created, 'docnum') || '');
+        docUrl = String(deepFind(created, 'doc_url') || '');
+        externalCreated = true;
+        if (!externalDocnum) throw new Error('iCount יצר חשבונית זיכוי אך לא החזיר מספר מסמך — ההפקה נעצרה לבדיקה');
+        await service.from('icount_refund_generations').update({
+          external_docnum: externalDocnum, external_url: docUrl, updated_at: new Date().toISOString(),
+        }).eq('return_id', returnId);
+      } else {
+        externalCreated = true;
+      }
+
+      const info = await icountCall(token, 'doc/info', {
+        doctype: 'refund', docnum: Number(externalDocnum), get_items: false,
+        get_payments: false, get_pdf_link: true, lang: 'he',
+      });
+      const pdfLink = String(deepFind(info, 'pdf_link') || '');
+      if (!pdfLink) throw new Error('חשבונית הזיכוי הופקה אך iCount לא החזיר קישור PDF — ניתן לנסות שוב בבטחה');
+      const pdfResponse = await fetch(pdfLink);
+      if (!pdfResponse.ok) throw new Error(`חשבונית הזיכוי הופקה אך הורדת ה-PDF נכשלה (${pdfResponse.status})`);
+      const pdf = new Uint8Array(await pdfResponse.arrayBuffer());
+      if (pdf.length < 500 || String.fromCharCode(...pdf.slice(0, 4)) !== '%PDF') {
+        throw new Error('iCount החזיר קובץ שאינו PDF — חשבונית הזיכוי לא נשמרה בחזרה');
+      }
+
+      const fileName = `RACHELI-S-refund-${externalDocnum}.pdf`;
+      const path = `${customer.id}/icount_refund_${externalDocnum}_${Date.now()}.pdf`;
+      const { error: uploadError } = await service.storage.from('invoices').upload(path, pdf, {
+        contentType: 'application/pdf', upsert: false,
+      });
+      if (uploadError) throw uploadError;
+      const { data: invoice, error: invoiceError } = await service.from('invoices').insert({
+        customer_id: customer.id,
+        order_id: null,
+        return_id: returnId,
+        invoice_number: externalDocnum,
+        amount: -totalWithVat,
+        file_path: path,
+        file_name: fileName,
+        status: 'active',
+        issued_at: docDate,
+        uploaded_by: user.id,
+        source: 'icount',
+        external_doctype: 'refund',
+        external_docnum: externalDocnum,
+        external_url: docUrl || null,
+      }).select('id, invoice_number, file_path').single();
+      if (invoiceError) {
+        await service.storage.from('invoices').remove([path]);
+        throw invoiceError;
+      }
+      await service.from('icount_refund_generations').update({
+        status: 'succeeded', invoice_id: invoice.id, error: null, updated_at: new Date().toISOString(),
+      }).eq('return_id', returnId);
+      return jsonResponse({
+        ok: true, invoice_number: externalDocnum, invoice_id: invoice.id,
+        total_with_vat: totalWithVat, doctype: 'refund', document_title: 'חשבונית זיכוי',
       });
     }
 
@@ -413,28 +636,49 @@ Deno.serve(async (req) => {
       : doctype === 'invrec' ? 'חשבונית מס + קבלה' : 'חשבונית מס';
     const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
     if (!token) return jsonResponse({ ok: false, error: 'ICOUNT_API_TOKEN לא הוגדר בפונקציית השרת' }, 503);
+    const capabilities = await loadIcountCapabilities(token);
+    if (!capabilities.doctypes.some((item) => item.code === doctype)) {
+      return jsonResponse({ ok: false, error: `${documentTitle} אינה זמינה בחשבון iCount` }, 409);
+    }
 
     const paymentMethod = String(body?.payment_method || '');
     const bankAccountId = String(body?.bank_account_id || '');
     let paymentFields: Record<string, unknown> = {};
     if (doctype === 'receipt' || doctype === 'invrec') {
-      const capabilities = await loadIcountCapabilities(token);
-      if (!capabilities.doctypes.some((item) => item.code === doctype)) {
-        return jsonResponse({ ok: false, error: `${documentTitle} אינה זמינה בחשבון iCount` }, 409);
-      }
       const method = capabilities.payment_methods.find((item) => item.code === paymentMethod);
-      if (!method) return jsonResponse({ ok: false, error: 'אמצעי התשלום אינו זמין ב-iCount' }, 409);
+      if (!method || !['banktransfer', 'cheques'].includes(paymentMethod)) {
+        return jsonResponse({ ok: false, error: 'יש לבחור העברה בנקאית או צ׳קים' }, 409);
+      }
 
-      if (paymentMethod === 'cash') {
-        paymentFields = { cash: { sum: totalWithVat } };
-      } else if (paymentMethod === 'banktransfer') {
+      if (paymentMethod === 'banktransfer') {
         const account = capabilities.bank_accounts.find((item) => item.id === bankAccountId);
         if (!account) return jsonResponse({ ok: false, error: 'יש לבחור חשבון בנק לקבלת ההעברה' }, 409);
         paymentFields = { banktransfer: { sum: totalWithVat, date: docDate, account: Number(account.id) } };
-      } else if (paymentMethod === 'barter') {
-        paymentFields = { barter: { sum: totalWithVat } };
       } else {
-        paymentFields = { payments: { [paymentMethod]: { sum: totalWithVat, payment_date: docDate } } };
+        if (!Array.isArray(body?.cheques) || body.cheques.length < 1 || body.cheques.length > 36) {
+          return jsonResponse({ ok: false, error: 'יש להזין בין צ׳ק אחד ל־36 צ׳קים' }, 400);
+        }
+        const cheques = body.cheques.map((raw: any, index: number) => {
+          const sum = round2(Number(raw?.sum));
+          const date = validISODate(raw?.date);
+          const bank = String(raw?.bank || '').trim();
+          const branch = String(raw?.branch || '').trim();
+          const account = String(raw?.account || '').trim();
+          const number = String(raw?.number || '').trim();
+          if (!Number.isFinite(sum) || sum <= 0 || sum > 10000000) throw new Error(`סכום לא תקין בצ׳ק ${index + 1}`);
+          if (![bank, branch, account, number].every((value) => /^\d{1,20}$/.test(value))) {
+            throw new Error(`פרטי הבנק אינם תקינים בצ׳ק ${index + 1}`);
+          }
+          return {
+            sum, date,
+            bank: Number(bank), branch: Number(branch), account: Number(account), number: Number(number),
+          };
+        });
+        const chequeTotal = round2(cheques.reduce((sum: number, cheque: any) => sum + cheque.sum, 0));
+        if (Math.abs(chequeTotal - totalWithVat) > 0.02) {
+          return jsonResponse({ ok: false, error: `סכום הצ׳קים חייב להיות ${totalWithVat.toFixed(2)}` }, 409);
+        }
+        paymentFields = { cheques };
       }
     }
 
@@ -443,7 +687,12 @@ Deno.serve(async (req) => {
       tax_id: customer?.tax_id || '', address: customer?.address || '',
       lines, discount, subtotal, docDate, paydate, vat: VAT_PERCENT,
     };
-    if (doctypeWasProvided) Object.assign(fingerprintBase, { doctype, paymentMethod, bankAccountId });
+    if (doctypeWasProvided) Object.assign(fingerprintBase, {
+      doctype,
+      paymentMethod: doctype === 'invoice' ? '' : paymentMethod,
+      bankAccountId: paymentMethod === 'banktransfer' ? bankAccountId : '',
+      cheques: paymentMethod === 'cheques' ? body.cheques : [],
+    });
     const fingerprint = await sha256(fingerprintBase);
     const preview = {
       lines, subtotal, discount, before_vat: beforeVat, vat, total_with_vat: totalWithVat,
@@ -576,6 +825,17 @@ Deno.serve(async (req) => {
           error: error instanceof Error ? error.message : String(error),
           updated_at: new Date().toISOString(),
         }).eq('request_id', flexibleRequestId);
+      }
+    }
+    if (returnId) {
+      const current = await service.from('icount_refund_generations')
+        .select('status').eq('return_id', returnId).maybeSingle();
+      if (current.data && current.data.status !== 'needs_review' && current.data.status !== 'succeeded') {
+        await service.from('icount_refund_generations').update({
+          status: externalCreated && !externalDocnum ? 'needs_review' : 'failed',
+          error: error instanceof Error ? error.message : String(error),
+          updated_at: new Date().toISOString(),
+        }).eq('return_id', returnId);
       }
     }
     if (orderId) {

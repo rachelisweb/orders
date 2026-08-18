@@ -162,16 +162,25 @@ function loadReviewFixtures() {
   db.users = [{ id: '60000000-0000-0000-0000-000000000001', customer_id: customerA.id, email: customerA.email }];
   db.emails = [];
   db.settings = { profit_start_date: '2026-08-01', profit_excluded_customer_ids: '[]', brand_name: 'רחליס' };
-  db.returns = [];
-  db.returnItems = [];
+  db.returns = [{
+    id: '70000000-0000-0000-0000-000000000001', return_number: 55,
+    returner_name: customerA.name, customer_id: customerA.id, customer_name: customerA.business_name,
+    return_date: '2026-08-18', created_at: '2026-08-18T09:00:00Z', status: 'pending',
+    total_units: 2, damaged_units: 0, notes: 'חזרת בדיקה מקומית', credited_at: null,
+  }];
+  db.returnItems = [{
+    id: 1, return_id: db.returns[0].id, product_id: db.products[0].id,
+    model: db.products[0].model, size: 'M', qty: 2, is_defective: false, notes: '', photo_url: '',
+  }];
   db.orderNotes = {};
   db.futureCollections = [{ collection_id: db.collections[1].id }];
   db.demandCustomerOrders = {};
   fillFilterOptions();
   const pending = db.orders.filter((o) => o.status === 'pending' && !o.future_order_at).length;
+  const pendingReturns = db.returns.filter((r) => r.status === 'pending').length;
   $('cntOrders').textContent = pending;
-  $('cntReturns').textContent = '0';
-  $('headerSub').textContent = `${fmtNum(db.orders.length)} הזמנות דמה · ${pending} ממתינות · ${fmtNum(db.products.length)} דגמים`;
+  $('cntReturns').textContent = pendingReturns;
+  $('headerSub').textContent = `${fmtNum(db.orders.length)} הזמנות דמה · ${pending} ממתינות · ${pendingReturns} חזרות · ${fmtNum(db.products.length)} דגמים`;
   renderActiveTab();
 }
 
@@ -413,7 +422,10 @@ function renderActionCard() {
             <div class="small muted">${fmtNum(r.total_units)} יח׳ · ${fmtDate(r.return_date, false)}${
               r.damaged_units > 0 ? ` · <span class="qty-diff">${r.damaged_units} פגומים</span>` : ''}</div>
           </div>
-          <button class="btn success sm" data-credit="${r.id}">✅ בוצע זיכוי</button>
+          <span class="row" style="gap:.35rem">
+            <button class="btn sm" data-generate-refund="${r.id}">🧾 חשבונית זיכוי</button>
+            <button class="btn success sm" data-credit="${r.id}">✅ בוצע זיכוי</button>
+          </span>
         </div>`).join('')}
       ${openRet.length > 8 ? `<div class="small faint" style="padding:.3rem .2rem">ועוד ${openRet.length - 8}…</div>` : ''}
     </div>`;
@@ -434,6 +446,8 @@ function renderActionCard() {
     }
     const cr = e.target.closest('[data-credit]');
     if (cr) { e.stopPropagation(); await creditReturn(cr.dataset.credit); return; }
+    const refund = e.target.closest('[data-generate-refund]');
+    if (refund) { e.stopPropagation(); await openIcountRefundPreview(refund.dataset.generateRefund); return; }
     if (e.target.closest('[data-upload-inv], [data-generate-invoice]')) return;   // מטופל בהאזנה הכללית
 
     const ret = e.target.closest('[data-return]');
@@ -1422,6 +1436,8 @@ function openOrder(id) {
                value="${o.discount_value > 0 ? o.discount_value : ''}" placeholder="0"
                aria-label="שיעור או סכום ההנחה">
         <button class="btn sm" id="discSave">שמירה</button>
+        ${o.status === 'ready' ? `<button class="btn ghost sm" id="customPriceBtn"
+          ${invs.length ? 'disabled title="לא ניתן לשנות מחיר לאחר שנשמר מסמך להזמנה"' : ''}>🏷️ מחיר מותאם אישית</button>` : ''}
       </div>
       <div class="small muted" id="discPreview" style="margin-bottom:1rem"></div>`
     : ''}
@@ -1549,6 +1565,8 @@ function wireOrderPanel(o, sub) {
       openOrder(o.id);
     } catch (err) { toast(friendlyError(err), true); btn.disabled = false; }
   });
+
+  on('customPriceBtn', 'click', () => openCustomOrderPrices(o));
 
   const seg = $('discSeg');
   if (!seg) return;
@@ -1999,6 +2017,63 @@ function makeLongPressSortable(container, onDrop, delay = 320) {
   });
   container.addEventListener('contextmenu', (event) => {
     if (active) event.preventDefault();
+  });
+}
+
+function openCustomOrderPrices(order) {
+  if (order.status !== 'ready') { toast('ניתן להגדיר מחיר מותאם רק להזמנה שמוכנה לאיסוף', true); return; }
+  if (db.invoices.some((invoice) => invoice.order_id === order.id && invoice.status !== 'cancelled')) {
+    toast('לא ניתן לשנות מחירים לאחר שנשמר מסמך להזמנה', true); return;
+  }
+  const models = groupOrderItemsByModel(order.order_items || []).map((group) => ({
+    model: group.model,
+    description: productByModel(group.model)?.description || '',
+    quantity: group.lines.reduce((sum, line) => sum + Number(line.qty || 0), 0),
+    unitPrice: Number(group.lines[0]?.unit_price || 0),
+  }));
+  if (!models.length) { toast('אין דגמים בהזמנה', true); return; }
+
+  modal(`מחיר מותאם אישית — הזמנה #${order.order_number}`, `
+    <div class="note small">המחיר שיישמר יחול על כל המידות של אותו דגם. ההנחה הקיימת תחושב מחדש מעל המחירים החדשים.</div>
+    <div class="custom-price-list">
+      ${models.map((item) => `<label class="custom-price-row">
+        <span><b>${esc(item.model)}</b>${item.description ? `<small>${esc(item.description)}</small>` : ''}</span>
+        <span class="muted small">${fmtNum(item.quantity)} יח׳</span>
+        <span class="custom-price-input"><input type="number" min="0.01" max="10000000" step="0.01"
+          inputmode="decimal" value="${item.unitPrice > 0 ? item.unitPrice : ''}"
+          data-custom-model="${esc(item.model)}" aria-label="מחיר ליחידה דגם ${esc(item.model)}"><span>₪</span></span>
+      </label>`).join('')}
+    </div>
+    <div class="err-msg" id="customPriceError"></div>
+    <button class="btn block lg" id="customPriceSave">שמירת המחירים</button>
+  `, true);
+
+  on('customPriceSave', 'click', async () => {
+    const prices = $$('#modalBody [data-custom-model]').map((input) => ({
+      model: input.dataset.customModel,
+      unit_price: Number(input.value),
+    }));
+    const invalid = prices.find((item) => !Number.isFinite(item.unit_price) || item.unit_price <= 0 || item.unit_price > 10000000);
+    if (invalid) {
+      showError('customPriceError', `מחיר לא תקין לדגם ${invalid.model}`);
+      return;
+    }
+    $('customPriceSave').disabled = true;
+    showError('customPriceError', '');
+    try {
+      const { data, error } = await sb.rpc('set_order_model_prices', {
+        p_order_id: order.id,
+        p_prices: prices,
+      });
+      if (error) throw error;
+      toast(`המחירים נשמרו — לתשלום ${fmtMoney(data.total)}`);
+      closeModal();
+      await loadAll();
+      openOrder(order.id);
+    } catch (error) {
+      showError('customPriceError', friendlyError(error));
+      $('customPriceSave').disabled = false;
+    }
   });
 }
 
@@ -2910,6 +2985,8 @@ function editProduct(id) {
 // מספיקה תמונה מהמצלמה.
 // ============================================================
 const returnItemsOf = (id) => db.returnItems.filter((i) => i.return_id === id);
+const refundInvoice = (returnId) => db.invoices.find((invoice) =>
+  invoice.return_id === returnId && invoice.status !== 'cancelled' && invoice.external_doctype === 'refund') || null;
 
 function renderReturns() {
   const buckets = { pending: [], credited: [] };
@@ -2946,13 +3023,16 @@ function renderReturns() {
       ${td('פגומים', r.damaged_units > 0 ? `<span class="chip amber">${r.damaged_units}</span>` : '—', 'num')}
       ${td('סטטוס', statusChip(RETURN_STATUS, r.status))}
       ${td('', r.status === 'pending'
-        ? `<button class="btn success sm" data-credit="${r.id}">✅ בוצע זיכוי</button>
+        ? `<button class="btn sm" data-generate-refund="${r.id}">🧾 חשבונית זיכוי</button>
+           <button class="btn success sm" data-credit="${r.id}">✅ בוצע זיכוי</button>
            <button class="btn danger sm" data-del-return="${r.id}">🗑️</button>`
         : `<button class="btn ghost sm" data-del-return="${r.id}">🗑️</button>`, 'nowrap')}
     </tr>`).join('')}
     </tbody></table></div>`;
 
   $('returnsTable').onclick = async (e) => {
+    const refund = e.target.closest('[data-generate-refund]');
+    if (refund) { e.stopPropagation(); await openIcountRefundPreview(refund.dataset.generateRefund); return; }
     const cr = e.target.closest('[data-credit]');
     if (cr) { e.stopPropagation(); await creditReturn(cr.dataset.credit); return; }
     const dl = e.target.closest('[data-del-return]');
@@ -2966,6 +3046,7 @@ function openReturn(id) {
   const r = db.returns.find((x) => x.id === id);
   if (!r) return;
   const items = returnItemsOf(id);
+  const refund = refundInvoice(id);
 
   $('orderPanelTitle').textContent = `חזרה #${r.return_number}`;
   $('orderPanelBody').onchange = null;
@@ -3006,12 +3087,19 @@ function openReturn(id) {
         ${td('הערה', esc(i.notes || '—'), 'small muted')}
       </tr>`).join('')}
       </tbody></table>
-    </div>`;
+    </div>
+    <h4 class="bold" style="margin:.9rem 0 .5rem">מסמכים (${refund ? 1 : 0})</h4>
+    ${refund ? `<div class="row small" style="padding:.4rem 0;border-bottom:1px solid var(--border)">
+      <button class="invoice-file-link" data-dl="${esc(refund.file_path)}"
+        data-name="${esc(refund.file_name || `refund-${refund.invoice_number}.pdf`)}">${esc(refund.invoice_number || '—')}</button>
+      ${invoiceDocumentChip(refund)}<span class="grow"></span><span>${fmtMoney(refund.amount)}</span>
+    </div>` : '<div class="small muted">טרם הופקה חשבונית זיכוי</div>'}`;
 
   $('orderPanelFoot').innerHTML = `
     <div class="row">
       ${r.status === 'pending'
-        ? `<button class="btn success" data-credit-panel="${r.id}">✅ בוצע זיכוי</button>` : ''}
+        ? `<button class="btn" data-generate-refund="${r.id}">🧾 הפקת חשבונית זיכוי</button>
+           <button class="btn success" data-credit-panel="${r.id}">✅ בוצע זיכוי</button>` : ''}
       <span class="grow"></span>
       <button class="btn danger sm" data-del-return-panel="${r.id}">🗑️ מחיקת החזרה</button>
     </div>`;
@@ -3785,13 +3873,17 @@ const ICOUNT_DOC_LABELS = {
   receipt: 'קבלה',
   invrec: 'חשבונית מס + קבלה',
   invoice: 'חשבונית מס',
+  refund: 'חשבונית זיכוי',
 };
 const icountDocLabel = (doctype) => ICOUNT_DOC_LABELS[doctype] || 'מסמך';
 
 async function loadIcountDocumentCapabilities() {
   if (LOCAL_REVIEW) return {
-    doctypes: [{ code: 'receipt', title: 'קבלה' }, { code: 'invrec', title: 'חשבונית מס + קבלה' }],
-    payment_methods: [{ code: 'cash', name: 'מזומן' }, { code: 'banktransfer', name: 'העברה בנקאית' }],
+    doctypes: [
+      { code: 'invoice', title: 'חשבונית מס' }, { code: 'receipt', title: 'קבלה' },
+      { code: 'invrec', title: 'חשבונית מס + קבלה' }, { code: 'refund', title: 'חשבונית זיכוי' },
+    ],
+    payment_methods: [{ code: 'banktransfer', name: 'העברה בנקאית' }, { code: 'cheques', name: 'צ׳קים' }],
     bank_accounts: [{ id: '1', title: 'חשבון בנק לדוגמה' }],
   };
   const { data, error } = await sb.functions.invoke('icount-invoice', { body: { action: 'health' } });
@@ -3850,16 +3942,16 @@ async function openIcountInvoicePreview(orderId) {
   }
 
   const availableDocTypes = (capabilities.doctypes || [])
-    .filter((item) => ['receipt', 'invrec'].includes(item.code));
-  const paymentMethods = capabilities.payment_methods || [];
+    .filter((item) => ['invoice', 'receipt', 'invrec'].includes(item.code));
+  const paymentMethods = (capabilities.payment_methods || [])
+    .filter((item) => ['banktransfer', 'cheques'].includes(item.code));
   const bankAccounts = capabilities.bank_accounts || [];
   const blockers = [];
   const warnings = [];
   if (!clientName) blockers.push('חסר שם לקוח למסמך');
   if (!p.items.length) blockers.push('אין פריטים שניתן לחייב');
   if (p.items.some((x) => x.unit_price <= 0)) blockers.push('יש דגם שמחירו 0 — יש לתקן לפני ההפקה');
-  if (!availableDocTypes.length) blockers.push('קבלה וחשבונית מס + קבלה אינן זמינות בחשבון iCount');
-  if (!paymentMethods.length) blockers.push('לא נמצא אמצעי תשלום נתמך בחשבון iCount');
+  if (!availableDocTypes.length) blockers.push('סוגי המסמכים המבוקשים אינם זמינים בחשבון iCount');
   if (!customer?.tax_id) warnings.push('לא הוזן ח.פ / ע.מ בכרטיס הלקוח');
   if (!customer?.address) warnings.push('לא הוזנה כתובת בכרטיס הלקוח');
 
@@ -3871,9 +3963,9 @@ async function openIcountInvoicePreview(orderId) {
             ${availableDocTypes.map((item) => `<option value="${esc(item.code)}">${esc(icountDocLabel(item.code))}</option>`).join('')}
           </select>
         </div>
-        <div class="field"><label for="icountPaymentMethod">אמצעי תשלום *</label>
-          <select id="icountPaymentMethod" ${paymentMethods.length ? '' : 'disabled'}>
-            ${paymentMethods.map((item) => `<option value="${esc(item.code)}">${esc(item.name)}</option>`).join('')}
+        <div class="field" id="icountPaymentMethodField" hidden><label for="icountPaymentMethod">אמצעי תשלום *</label>
+          <select id="icountPaymentMethod">
+            ${paymentMethods.map((item) => `<option value="${esc(item.code)}">${esc(item.code === 'cheques' ? 'צ׳קים' : 'העברה בנקאית')}</option>`).join('')}
           </select>
         </div>
         <div class="field" id="icountBankAccountField" hidden><label for="icountBankAccount">חשבון בנק *</label>
@@ -3882,11 +3974,17 @@ async function openIcountInvoicePreview(orderId) {
           </select>
         </div>
       </div>
+      <div id="icountChequesField" hidden>
+        <div class="row" style="margin-bottom:.45rem"><b>פרטי הצ׳קים</b><span class="grow"></span>
+          <button type="button" class="btn ghost sm" id="icountAddCheque">➕ הוספת צ׳ק</button></div>
+        <div class="icount-cheques" id="icountCheques"></div>
+        <div class="small muted" id="icountChequeTotal"></div>
+      </div>
       <div class="invoice-preview-head">
         <div><span class="muted small">לקוח</span><b>${esc(clientName || '—')}</b></div>
         <div><span class="muted small">ח.פ / ע.מ</span><b>${esc(customer?.tax_id || '—')}</b></div>
         <div><span class="muted small">תאריך הפקה</span><b>${fmtDate(date, false)}</b></div>
-        <div><span class="muted small">תאריך תשלום</span><b>${fmtDate(date, false)}</b></div>
+        <div><span class="muted small" id="icountDateLabel">לתשלום עד</span><b id="icountDateValue">${fmtDate(endOfMonthISO(new Date(`${date}T12:00:00`)), false)}</b></div>
       </div>
       ${blockers.length ? `<div class="note danger-note small"><b>לא ניתן להפיק:</b> ${blockers.map(esc).join(' · ')}</div>` : ''}
       ${warnings.length ? `<div class="note warn small"><b>יש לבדוק:</b> ${warnings.map(esc).join(' · ')}</div>` : ''}
@@ -3911,37 +4009,101 @@ async function openIcountInvoicePreview(orderId) {
       ${LOCAL_REVIEW ? '<div class="note small">🧪 מצב בדיקה מקומית: ההפקה חסומה ולא תישלח בקשה ל־iCount.</div>' : ''}
       <label class="setting-check invoice-confirm">
         <input type="checkbox" id="icountConfirm" ${blockers.length || LOCAL_REVIEW ? 'disabled' : ''}>
-        <span><b>בדקתי את סוג המסמך, אמצעי התשלום, הלקוח והסכומים</b><small id="icountConfirmHint">לאחר האישור יופק מסמך מקור ב־iCount.</small></span>
+        <span><b id="icountConfirmTitle">בדקתי את סוג המסמך, הלקוח והסכומים</b><small id="icountConfirmHint">לאחר האישור יופק מסמך מקור ב־iCount.</small></span>
       </label>
       <div class="err-msg" id="icountError"></div>
       <button class="btn block lg" id="icountCreate" disabled>אישור והפקת מסמך</button>
     </div>
   `, true);
 
+  let chequeRows = [{ sum: p.total.toFixed(2), date, bank: '', branch: '', account: '', number: '' }];
+  const readChequeRows = () => $$('#icountCheques .icount-cheque-row').map((row) => ({
+    sum: row.querySelector('[data-cheque="sum"]').value,
+    date: row.querySelector('[data-cheque="date"]').value,
+    bank: row.querySelector('[data-cheque="bank"]').value,
+    branch: row.querySelector('[data-cheque="branch"]').value,
+    account: row.querySelector('[data-cheque="account"]').value,
+    number: row.querySelector('[data-cheque="number"]').value,
+  }));
+  const renderChequeRows = () => {
+    $('icountCheques').innerHTML = chequeRows.map((cheque, index) => `
+      <div class="icount-cheque-row">
+        <span class="chip gray">צ׳ק ${index + 1}</span>
+        <label><span>סכום *</span><input type="number" min="0.01" step="0.01" inputmode="decimal"
+          value="${esc(cheque.sum)}" data-cheque="sum"></label>
+        <label><span>תאריך *</span><input type="date" value="${esc(cheque.date)}" data-cheque="date"></label>
+        <label><span>בנק *</span><input type="text" inputmode="numeric" maxlength="3" value="${esc(cheque.bank)}" data-cheque="bank"></label>
+        <label><span>סניף *</span><input type="text" inputmode="numeric" maxlength="6" value="${esc(cheque.branch)}" data-cheque="branch"></label>
+        <label><span>חשבון *</span><input type="text" inputmode="numeric" maxlength="20" value="${esc(cheque.account)}" data-cheque="account"></label>
+        <label><span>מספר צ׳ק *</span><input type="text" inputmode="numeric" maxlength="20" value="${esc(cheque.number)}" data-cheque="number"></label>
+        <button type="button" class="btn ghost sm" data-remove-cheque="${index}" ${chequeRows.length === 1 ? 'disabled' : ''}>🗑️</button>
+      </div>`).join('');
+  };
+  const paymentValidation = () => {
+    const doctype = $('icountDocType')?.value || '';
+    if (doctype === 'invoice') return { ok: true, cheques: [] };
+    const method = $('icountPaymentMethod')?.value || '';
+    if (!['banktransfer', 'cheques'].includes(method)) return { ok: false, cheques: [] };
+    if (method === 'banktransfer') return { ok: Boolean($('icountBankAccount')?.value), cheques: [] };
+    const cheques = readChequeRows();
+    const validDetails = cheques.length > 0 && cheques.every((cheque) =>
+      Number(cheque.sum) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(cheque.date)
+      && [cheque.bank, cheque.branch, cheque.account, cheque.number].every((value) => /^\d+$/.test(value)));
+    const chequeTotal = cheques.reduce((sum, cheque) => sum + (Number(cheque.sum) || 0), 0);
+    $('icountChequeTotal').textContent = `סה״כ צ׳קים: ${fmtMoney(chequeTotal)} · נדרש: ${fmtMoney(p.total)}`;
+    return { ok: validDetails && Math.abs(chequeTotal - p.total) <= 0.02, cheques };
+  };
   const updateIcountDocumentOptions = () => {
     const doctype = $('icountDocType')?.value || '';
+    const needsPayment = doctype === 'receipt' || doctype === 'invrec';
     const paymentMethod = $('icountPaymentMethod')?.value || '';
-    const needsBank = paymentMethod === 'banktransfer';
-    $('icountBankAccountField').hidden = !needsBank;
-    const bankMissing = needsBank && !$('icountBankAccount')?.value;
+    $('icountPaymentMethodField').hidden = !needsPayment;
+    $('icountBankAccountField').hidden = !needsPayment || paymentMethod !== 'banktransfer';
+    $('icountChequesField').hidden = !needsPayment || paymentMethod !== 'cheques';
+    $('icountDateLabel').textContent = needsPayment ? 'תאריך תשלום' : 'לתשלום עד';
+    $('icountDateValue').textContent = fmtDate(needsPayment ? date : endOfMonthISO(new Date(`${date}T12:00:00`)), false);
+    const payment = paymentValidation();
     $('icountConfirm').checked = false;
-    $('icountConfirm').disabled = blockers.length > 0 || bankMissing || LOCAL_REVIEW;
+    $('icountConfirm').disabled = blockers.length > 0 || !payment.ok || LOCAL_REVIEW;
     $('icountCreate').disabled = true;
     $('icountCreate').textContent = `אישור והפקת ${icountDocLabel(doctype)}`;
+    $('icountConfirmTitle').textContent = needsPayment
+      ? 'בדקתי את סוג המסמך, אמצעי התשלום, הלקוח והסכומים'
+      : 'בדקתי את סוג המסמך, הלקוח והסכומים';
     $('icountConfirmHint').textContent = `לאחר האישור תופק ${icountDocLabel(doctype)} מקור ב־iCount. לא ניתן למחוק אותה כאילו לא הופקה.`;
   };
+  renderChequeRows();
   on('icountDocType', 'change', updateIcountDocumentOptions);
   on('icountPaymentMethod', 'change', updateIcountDocumentOptions);
   on('icountBankAccount', 'change', updateIcountDocumentOptions);
+  $('icountCheques').oninput = updateIcountDocumentOptions;
+  $('icountCheques').onclick = (event) => {
+    const remove = event.target.closest('[data-remove-cheque]');
+    if (!remove || chequeRows.length === 1) return;
+    chequeRows = readChequeRows();
+    chequeRows.splice(Number(remove.dataset.removeCheque), 1);
+    renderChequeRows();
+    updateIcountDocumentOptions();
+  };
+  on('icountAddCheque', 'click', () => {
+    chequeRows = readChequeRows();
+    const used = chequeRows.reduce((sum, cheque) => sum + (Number(cheque.sum) || 0), 0);
+    chequeRows.push({ sum: Math.max(p.total - used, 0).toFixed(2), date, bank: '', branch: '', account: '', number: '' });
+    renderChequeRows();
+    updateIcountDocumentOptions();
+  });
   updateIcountDocumentOptions();
   on('icountConfirm', 'change', () => {
-    $('icountCreate').disabled = !$('icountConfirm').checked || blockers.length > 0 || LOCAL_REVIEW;
+    $('icountCreate').disabled = !$('icountConfirm').checked || blockers.length > 0 || !paymentValidation().ok || LOCAL_REVIEW;
   });
   on('icountCreate', 'click', async () => {
     if (!$('icountConfirm').checked) return;
     const btn = $('icountCreate');
     const errorBox = $('icountError');
     const doctype = $('icountDocType').value;
+    const payment = paymentValidation();
+    if (!payment.ok) { showError('icountError', 'יש להשלים את פרטי התשלום ולוודא שהסכום תואם למסמך'); return; }
+    const needsPayment = doctype === 'receipt' || doctype === 'invrec';
     btn.disabled = true;
     btn.textContent = 'מפיק ושומר… אין לסגור';
     errorBox.classList.remove('show');
@@ -3949,8 +4111,9 @@ async function openIcountInvoicePreview(orderId) {
       const { data, error } = await sb.functions.invoke('icount-invoice', {
         body: {
           action: 'create', order_id: order.id, doctype,
-          payment_method: $('icountPaymentMethod').value,
-          bank_account_id: $('icountBankAccount')?.value || null,
+          payment_method: needsPayment ? $('icountPaymentMethod').value : null,
+          bank_account_id: needsPayment ? ($('icountBankAccount')?.value || null) : null,
+          cheques: needsPayment && $('icountPaymentMethod').value === 'cheques' ? payment.cheques : [],
         },
       });
       if (error) throw error;
@@ -3964,6 +4127,123 @@ async function openIcountInvoicePreview(orderId) {
       errorBox.classList.add('show');
       btn.disabled = false;
       btn.textContent = `ניסיון חוזר — ${icountDocLabel(doctype)}`;
+    }
+  });
+}
+
+async function openIcountRefundPreview(returnId) {
+  const returnRow = db.returns.find((item) => item.id === returnId);
+  if (!returnRow) return;
+  if (returnRow.status !== 'pending') { toast('ניתן להפיק חשבונית זיכוי רק לחזרה ממתינה', true); return; }
+  if (refundInvoice(returnId)) {
+    toast('חשבונית הזיכוי כבר הופקה. ניתן לסמן את החזרה כבוצע זיכוי.', true);
+    return;
+  }
+
+  modal(`חשבונית זיכוי — חזרה #${returnRow.return_number}`, `
+    <div class="empty"><div class="ico">🧾</div>מחשב את פרטי הזיכוי…</div>
+  `, true);
+
+  let preview;
+  try {
+    if (LOCAL_REVIEW) {
+      const customer = db.customers.find((item) => item.id === returnRow.customer_id);
+      if (!customer) throw new Error('יש לשייך את החזרה לכרטיס לקוח לפני הפקת הזיכוי');
+      const grouped = new Map();
+      for (const item of returnItemsOf(returnId)) {
+        const product = productByModel(item.model);
+        const base = Number(customer.price_at_cost ? product?.cost_price : product?.wholesale_price || 0);
+        const price = roundMoney(base * (customer.price_at_cost ? 1 : 1 - Number(customer.discount_pct || 0) / 100));
+        if (price <= 0) throw new Error(`לא נמצא מחיר לזיכוי עבור הדגם ${item.model}`);
+        const key = `${item.model}\u0000${price}`;
+        if (!grouped.has(key)) grouped.set(key, {
+          sku: item.model, description: product?.description || item.model, quantity: 0, unitprice: price,
+        });
+        grouped.get(key).quantity += Number(item.qty || 0);
+      }
+      const lines = [...grouped.values()];
+      const subtotal = roundMoney(lines.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
+      preview = {
+        lines, subtotal, vat: roundMoney(subtotal * .18), total_with_vat: roundMoney(subtotal * 1.18),
+        doc_date: todayISO(), client_name: customer.business_name || customer.name,
+        tax_id: customer.tax_id || '', return_number: returnRow.return_number,
+      };
+    } else {
+      const { data, error } = await sb.functions.invoke('icount-invoice', {
+        body: { action: 'refund_preview', return_id: returnId },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'לא ניתן להכין את חשבונית הזיכוי');
+      preview = data.preview;
+    }
+  } catch (error) {
+    modal(`חשבונית זיכוי — חזרה #${returnRow.return_number}`, `
+      <div class="note danger-note">לא ניתן להכין את חשבונית הזיכוי.</div>
+      <div class="err-msg show">${esc(friendlyError(error))}</div>
+    `, true);
+    return;
+  }
+
+  modal(`חשבונית זיכוי — חזרה #${returnRow.return_number}`, `
+    <div class="invoice-preview">
+      <div class="invoice-preview-head">
+        <div><span class="muted small">לקוח</span><b>${esc(preview.client_name || '—')}</b></div>
+        <div><span class="muted small">ח.פ / ע.מ</span><b>${esc(preview.tax_id || '—')}</b></div>
+        <div><span class="muted small">חזרה</span><b>#${esc(preview.return_number)}</b></div>
+        <div><span class="muted small">תאריך הפקה</span><b>${fmtDate(preview.doc_date, false)}</b></div>
+      </div>
+      <div class="note small">המחיר מבוסס על ההזמנה האחרונה של הלקוח שבה הופיע הדגם; אם לא נמצאה, נעשה שימוש במחיר הלקוח הנוכחי.</div>
+      <div class="table-wrap"><table><thead><tr>
+        <th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
+      </tr></thead><tbody>
+        ${(preview.lines || []).map((item) => `<tr>
+          <td><b>${esc(item.sku)}</b>${item.description ? `<div class="small muted">${esc(item.description)}</div>` : ''}</td>
+          <td class="num">${fmtNum(item.quantity)}</td>
+          <td class="num">${fmtMoney(item.unitprice)}</td>
+          <td class="num">${fmtMoney(item.quantity * item.unitprice)}</td>
+        </tr>`).join('')}
+      </tbody></table></div>
+      <div class="invoice-totals">
+        <span>לפני מע״מ</span><b>${fmtMoney(preview.subtotal)}</b>
+        <span>מע״מ 18%</span><b>${fmtMoney(preview.vat)}</b>
+        <span class="invoice-grand">סה״כ זיכוי כולל מע״מ</span><b class="invoice-grand">${fmtMoney(preview.total_with_vat)}</b>
+      </div>
+      <div class="note small">iCount לא ישלח מייל. חשבונית הזיכוי תישמר בחזרה, ולאחר ההפקה החזרה תסומן כזוכתה.</div>
+      ${LOCAL_REVIEW ? '<div class="note small">🧪 מצב בדיקה מקומית: ההפקה חסומה ולא תישלח בקשה ל־iCount.</div>' : ''}
+      <label class="setting-check invoice-confirm">
+        <input type="checkbox" id="icountRefundConfirm" ${LOCAL_REVIEW ? 'disabled' : ''}>
+        <span><b>בדקתי את הלקוח, הפריטים והסכומים</b><small>לאחר האישור תופק חשבונית זיכוי מקור ב־iCount.</small></span>
+      </label>
+      <div class="err-msg" id="icountRefundError"></div>
+      <button class="btn block lg" id="icountRefundCreate" disabled>אישור והפקת חשבונית זיכוי</button>
+    </div>
+  `, true);
+
+  on('icountRefundConfirm', 'change', () => {
+    $('icountRefundCreate').disabled = !$('icountRefundConfirm').checked || LOCAL_REVIEW;
+  });
+  on('icountRefundCreate', 'click', async () => {
+    if (!$('icountRefundConfirm').checked) return;
+    const button = $('icountRefundCreate');
+    button.disabled = true;
+    button.textContent = 'מפיק ושומר… אין לסגור';
+    showError('icountRefundError', '');
+    try {
+      const { data, error } = await sb.functions.invoke('icount-invoice', {
+        body: { action: 'refund_create', return_id: returnId },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'הפקת חשבונית הזיכוי נכשלה');
+      const { error: creditError } = await sb.rpc('credit_return', { p_return_id: returnId });
+      if (creditError) throw new Error(`המסמך הופק, אך סימון החזרה כזוכתה נכשל: ${friendlyError(creditError)}`);
+      toast(`חשבונית זיכוי ${data.invoice_number || ''} הופקה והחזרה סומנה כזוכתה`);
+      closeModal();
+      $('orderOverlay').classList.remove('active');
+      await loadAll();
+    } catch (error) {
+      showError('icountRefundError', friendlyError(error));
+      button.disabled = false;
+      button.textContent = 'ניסיון חוזר — חשבונית זיכוי';
     }
   });
 }
@@ -4267,12 +4547,14 @@ function renderInvoices() {
   }
 
   $('invoicesTable').innerHTML = `<div class="table-wrap"><table class="responsive"><thead><tr>
-    <th>מס׳</th><th>לקוח</th><th>הזמנה</th><th>תאריך</th>
+    <th>מס׳</th><th>לקוח</th><th>הזמנה / חזרה</th><th>תאריך</th>
     <th class="num">סכום</th><th></th></tr></thead><tbody>
     ${items.map((v) => `<tr>
       ${td('מס׳', `${esc(v.invoice_number || '—')}${invoiceDocumentChip(v)}`, 'bold')}
       ${td('לקוח', esc(v.customers?.name || '—'))}
-      ${td('הזמנה', v.orders?.order_number ? '#' + v.orders.order_number : '—')}
+      ${td('הזמנה / חזרה', v.return_id
+        ? `חזרה #${db.returns.find((item) => item.id === v.return_id)?.return_number || '—'}`
+        : (v.orders?.order_number ? '#' + v.orders.order_number : '—'))}
       ${td('תאריך', fmtDate(v.issued_at, false), 'small nowrap')}
       ${td('סכום', invoiceDisplayAmount(v) != null ? fmtMoney(invoiceDisplayAmount(v)) : '—', 'num')}
       ${td('', `<button class="btn ghost sm" data-dl="${esc(v.file_path)}"
@@ -5026,7 +5308,7 @@ function wire() {
       '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
       '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
       '[data-resend-shipped]', '[data-model-check]', '[data-demand-model-check]', '[data-split-order]',
-      '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
+       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#customPriceSave', '#admNotesSave', '#icountCreate', '#icountRefundCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#pImagePick', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave', '#profitExcludedSave',
       '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
@@ -5229,7 +5511,10 @@ function wire() {
   on('exportInvoices', 'click', async () => {
     const rows = filteredInvoices().map((v) => ({
       'מס׳ חשבונית': v.invoice_number || '', 'לקוח': v.customers?.name || '',
-      'הזמנה': v.orders?.order_number || '', 'תאריך': fmtDate(v.issued_at, false),
+      'הזמנה / חזרה': v.return_id
+        ? `חזרה #${db.returns.find((item) => item.id === v.return_id)?.return_number || ''}`
+        : (v.orders?.order_number || ''),
+      'תאריך': fmtDate(v.issued_at, false),
       'סכום': invoiceDisplayAmount(v) ?? 0,
     }));
     if (!rows.length) { toast('אין חשבוניות לייצוא', true); return; }
@@ -5323,6 +5608,8 @@ function wire() {
     if (orderInvoice) { await downloadInvoice(orderInvoice); return; }
 
     // ── פעולות מתוך פאנל החזרה ──
+    const generateRefund = e.target.closest('[data-generate-refund]');
+    if (generateRefund) { await openIcountRefundPreview(generateRefund.dataset.generateRefund); return; }
     const cp = e.target.closest('[data-credit-panel]');
     if (cp) { await creditReturn(cp.dataset.creditPanel); return; }
     const drp = e.target.closest('[data-del-return-panel]');
