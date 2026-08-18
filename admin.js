@@ -2347,7 +2347,8 @@ function renderStock() {
             const qty = Number(p.stock[s] || 0);
             return `<label class="size">
               <span class="lbl">${esc(s)}</span>
-              <input type="number" inputmode="numeric" min="0" value="${qty}"
+              <input type="number" inputmode="numeric" min="0" step="1"
+                value="${qty > 0 ? qty : ''}" placeholder="0"
                 class="${qty > 0 ? 'on' : ''}" data-stock="${p.id}|${s}"
                 aria-label="דגם ${esc(p.model)} מידה ${esc(s)}">
             </label>`;
@@ -2461,8 +2462,9 @@ function bulkPrices() {
 
 async function saveStock(inp) {
   const [pid, size] = inp.dataset.stock.split('|');
-  const qty = parseInt(inp.value, 10);
-  if (!Number.isFinite(qty) || qty < 0) { toast('כמות לא תקינה', true); renderStock(); return; }
+  const raw = inp.value.trim();
+  const qty = raw === '' ? 0 : Number(raw);
+  if (!Number.isInteger(qty) || qty < 0) { toast('כמות לא תקינה', true); renderStock(); return; }
 
   inp.disabled = true;
   try {
@@ -2472,6 +2474,7 @@ async function saveStock(inp) {
     if (p) {
       p.stock[size] = qty;
       p.total = Object.values(p.stock).reduce((a, b) => a + b, 0);
+      inp.value = qty > 0 ? String(qty) : '';
       inp.classList.toggle('on', qty > 0);
       const total = document.querySelector(`[data-stock-total="${pid}"]`);
       if (total) total.textContent = fmtNum(p.total);
