@@ -372,6 +372,35 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .kpi.red    { border-inline-start-color: var(--danger); }
 .kpi.violet { border-inline-start-color: var(--violet); }
 
+.profit-exclusion-summary {
+  margin-top: .75rem;
+  padding-top: .75rem;
+  border-top: 1px solid var(--border);
+}
+.profit-exclusion-summary > .row { align-items: center; }
+.profit-exclusion-chips {
+  display: flex; flex-wrap: wrap; gap: .35rem;
+  margin-top: .55rem;
+}
+.profit-exclusion-chips:empty { display: none; }
+.profit-customer-picker {
+  display: grid; gap: .4rem;
+  max-height: min(55vh, 520px); overflow: auto;
+  padding: .15rem;
+}
+.profit-customer-option {
+  display: flex; align-items: center; gap: .65rem;
+  min-height: 48px; padding: .55rem .65rem;
+  border: 1px solid var(--border); border-radius: 9px;
+  background: var(--surface-2); cursor: pointer;
+}
+.profit-customer-option:hover { border-color: var(--accent); }
+.profit-customer-option input { flex: 0 0 auto; }
+.profit-customer-option .customer-copy { min-width: 0; }
+.profit-customer-option .customer-copy > * {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ── טבלאות: הופכות לכרטיסים בנייד ───────────────────── */
 .table-wrap {
   overflow-x: auto;
@@ -1279,6 +1308,9 @@ td.pick, th.pick { width: 38px; text-align: center; }
     min-width: 0;
     padding-inline: .4rem;
   }
+
+  .profit-exclusion-summary > .row { align-items: stretch; flex-direction: column; }
+  .profit-exclusion-summary .btn { width: 100%; }
 
   #tab-orders .card > h2 .grow,
   #tab-demand .card > h2 .grow,

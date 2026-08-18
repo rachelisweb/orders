@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css?v=20260818-6">
+<link rel="stylesheet" href="styles.css?v=20260818-7">
 </head>
 <body>
 
@@ -201,6 +201,16 @@
             <button class="btn ghost sm" id="profitStartClear">כל ההיסטוריה</button>
           </div>
           <div class="small muted" id="profitStartHint" style="margin-top:.5rem"></div>
+          <div class="profit-exclusion-summary">
+            <div class="row">
+              <div class="grow">
+                <div class="bold">👥 לקוחות שלא נכללים בחישוב</div>
+                <div class="small muted" id="profitExcludedHint"></div>
+              </div>
+              <button class="btn ghost sm" id="profitExcludedOpen">בחירת לקוחות</button>
+            </div>
+            <div class="profit-exclusion-chips" id="profitExcludedChips"></div>
+          </div>
         </div>
         <div class="note warn small" id="costWarn" style="display:none"></div>
         <div class="kpis" id="profitKpis"></div>
@@ -411,6 +421,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="admin.js?v=20260818-8"></script>
+<script type="module" src="admin.js?v=20260818-9"></script>
 </body>
 </html>

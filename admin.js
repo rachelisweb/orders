@@ -161,7 +161,7 @@ function loadReviewFixtures() {
   }];
   db.users = [{ id: '60000000-0000-0000-0000-000000000001', customer_id: customerA.id, email: customerA.email }];
   db.emails = [];
-  db.settings = { profit_start_date: '2026-08-01', brand_name: 'רחליס' };
+  db.settings = { profit_start_date: '2026-08-01', profit_excluded_customer_ids: '[]', brand_name: 'רחליס' };
   db.returns = [];
   db.returnItems = [];
   db.orderNotes = {};
@@ -292,11 +292,29 @@ function profitStart() {
   const d = new Date(v + 'T00:00:00');
   return Number.isNaN(d.getTime()) ? null : d;
 }
-function inProfitWindow(order) {
+function profitExcludedCustomerIds() {
+  const value = db.settings.profit_excluded_customer_ids;
+  if (Array.isArray(value)) return new Set(value.map(String));
+  if (!value) return new Set();
+  try {
+    const parsed = JSON.parse(value);
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+function inProfitDateWindow(order) {
   const from = profitStart();
   return !from || new Date(order.created_at) >= from;
 }
-const profitItems = () => filteredItems().filter((it) => inProfitWindow(it.order));
+function inProfitWindow(order, excludedCustomers = profitExcludedCustomerIds()) {
+  return inProfitDateWindow(order)
+    && (!order.customer_id || !excludedCustomers.has(String(order.customer_id)));
+}
+const profitItems = () => {
+  const excludedCustomers = profitExcludedCustomerIds();
+  return filteredItems().filter((it) => inProfitWindow(it.order, excludedCustomers));
+};
 
 function filteredOrders() {
   const from = filters.from ? new Date(filters.from + 'T00:00:00') : null;
@@ -2100,13 +2118,31 @@ function renderProfit() {
   }
 
   // ── תאריך תחילת החישוב ──
-  const from     = profitStart();
-  const excluded = filteredItems().length - profitItems().length;
+  const from = profitStart();
+  const baseItems = filteredItems();
+  const excludedByDate = baseItems.filter((it) => !inProfitDateWindow(it.order)).length;
+  const excludedIds = profitExcludedCustomerIds();
+  const excludedCustomers = db.customers
+    .filter((customer) => excludedIds.has(String(customer.id)))
+    .sort((a, b) => (a.business_name || a.name || '').localeCompare(b.business_name || b.name || '', 'he'));
+  const excludedOrders = new Set(baseItems
+    .filter((it) => inProfitDateWindow(it.order) && it.order.customer_id
+      && excludedIds.has(String(it.order.customer_id)))
+    .map((it) => it.order.id));
   $('profitStart').value = db.settings.profit_start_date || '';
   $('profitStartHint').innerHTML = from
     ? `נספרות הזמנות מ-<b>${fmtDate(from, false)}</b> ואילך.
-       ${excluded > 0 ? `<b>${fmtNum(excluded)}</b> שורות היסטוריות מוחרגות מהחישוב.` : ''}`
+       ${excludedByDate > 0 ? `<b>${fmtNum(excludedByDate)}</b> שורות היסטוריות מוחרגות מהחישוב.` : ''}`
     : 'כרגע נספרת <b>כל</b> ההיסטוריה, כולל ההזמנות שיובאו מהגיליון הישן.';
+  $('profitExcludedOpen').textContent = excludedCustomers.length ? 'עריכת הבחירה' : 'בחירת לקוחות';
+  $('profitExcludedHint').innerHTML = excludedCustomers.length
+    ? `<b>${fmtNum(excludedCustomers.length)}</b> לקוחות מוחרגים · <b>${fmtNum(excludedOrders.size)}</b> הזמנות אינן נספרות בטווח הנוכחי.`
+    : 'לא הוגדרו לקוחות להחרגה.';
+  $('profitExcludedChips').innerHTML = excludedCustomers.slice(0, 10)
+    .map((customer) => `<span class="chip gray">${esc(customer.business_name || customer.name || 'ללא שם')}</span>`)
+    .join('')
+    + (excludedCustomers.length > 10
+      ? `<span class="chip gray">ועוד ${fmtNum(excludedCustomers.length - 10)}…</span>` : '');
 
   const items   = profitItems();
   const revenue = items.reduce((a, i) => a + lineNet(i), 0);
@@ -2234,6 +2270,58 @@ function openProfitMonth(monthKey, title) {
     closeModal();
     openCustomer(customer.dataset.monthCustomer);
   };
+}
+
+function openProfitCustomerExclusions() {
+  const selected = profitExcludedCustomerIds();
+  const validCustomerIds = new Set(db.customers.map((customer) => String(customer.id)));
+  for (const id of selected) if (!validCustomerIds.has(id)) selected.delete(id);
+  const customerLabel = (customer) => customer.business_name || customer.name || 'ללא שם';
+
+  modal('לקוחות שלא נכללים בחישוב', `
+    <div class="note small">ההחרגה משפיעה רק על דוחות הרווחיות והייצוא שלהם. ההזמנות והלקוחות עצמם נשארים ללא שינוי.</div>
+    <input type="search" id="profitExcludedSearch" placeholder="🔍 חיפוש לקוח…" style="margin-bottom:.7rem">
+    <div class="profit-customer-picker" id="profitExcludedList"></div>
+    <div class="row" style="margin-top:.9rem">
+      <button class="btn" id="profitExcludedSave">שמירת הבחירה</button>
+      <button class="btn ghost" id="profitExcludedClear">ניקוי הבחירה</button>
+      <span class="grow"></span>
+      <span class="small muted" id="profitExcludedCount"></span>
+    </div>`, true);
+
+  const renderList = () => {
+    const query = $('profitExcludedSearch').value.trim().toLowerCase();
+    const customers = db.customers
+      .filter((customer) => [customerLabel(customer), customer.name, customer.email, customer.phone]
+        .some((value) => String(value || '').toLowerCase().includes(query)))
+      .sort((a, b) => customerLabel(a).localeCompare(customerLabel(b), 'he'));
+
+    $('profitExcludedList').innerHTML = customers.length
+      ? customers.map((customer) => `
+          <label class="profit-customer-option">
+            <input type="checkbox" data-profit-excluded-customer="${esc(customer.id)}"
+              ${selected.has(String(customer.id)) ? 'checked' : ''}>
+            <span class="customer-copy grow">
+              <b>${esc(customerLabel(customer))}</b>
+              <span class="small muted">${esc([customer.name !== customerLabel(customer) ? customer.name : '', customer.phone || '', customer.email || ''].filter(Boolean).join(' · '))}</span>
+            </span>
+          </label>`).join('')
+      : '<div class="empty">לא נמצאו לקוחות</div>';
+    $('profitExcludedCount').textContent = `${fmtNum(selected.size)} נבחרו`;
+  };
+
+  $('profitExcludedSearch').oninput = debounce(renderList, 150);
+  $('profitExcludedList').onchange = (event) => {
+    const checkbox = event.target.closest('[data-profit-excluded-customer]');
+    if (!checkbox) return;
+    if (checkbox.checked) selected.add(checkbox.dataset.profitExcludedCustomer);
+    else selected.delete(checkbox.dataset.profitExcludedCustomer);
+    $('profitExcludedCount').textContent = `${fmtNum(selected.size)} נבחרו`;
+  };
+  $('profitExcludedClear').onclick = () => { selected.clear(); renderList(); };
+  $('profitExcludedSave').onclick = () => saveProfitExcludedCustomers([...selected]);
+  renderList();
+  requestAnimationFrame(() => $('profitExcludedSearch').focus());
 }
 
 // ============================================================
@@ -4446,6 +4534,30 @@ async function saveProfitStart(value) {
   finally { btn.disabled = false; }
 }
 
+async function saveProfitExcludedCustomers(customerIds) {
+  const ids = [...new Set(customerIds.map(String))]
+    .filter((id) => db.customers.some((customer) => String(customer.id) === id))
+    .sort();
+  const value = JSON.stringify(ids);
+  const btn = $('profitExcludedSave');
+  if (btn) btn.disabled = true;
+  try {
+    const { error } = await sb.from('app_settings')
+      .upsert({ key: 'profit_excluded_customer_ids', value, updated_at: new Date().toISOString() },
+              { onConflict: 'key' });
+    if (error) throw error;
+    db.settings.profit_excluded_customer_ids = value;
+    closeModal();
+    toast(ids.length
+      ? `${fmtNum(ids.length)} לקוחות לא ייכללו בחישובי הרווחיות`
+      : 'כל הלקוחות נכללים בחישובי הרווחיות');
+    renderActiveTab();
+  } catch (err) {
+    toast(friendlyError(err), true);
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function exportReturns() {
   const rows = [];
   for (const r of db.returns) {
@@ -4611,7 +4723,7 @@ function wire() {
       '[data-resend-shipped]', '[data-model-check]', '[data-demand-model-check]', '[data-split-order]',
       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
-      '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave',
+      '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave', '#profitExcludedSave',
       '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
     ].join(',');
     document.addEventListener('click', (e) => {
@@ -4661,6 +4773,7 @@ function wire() {
   on('exportReturns', 'click', exportReturns);
 
   on('profitStartSave', 'click', () => saveProfitStart($('profitStart').value || null));
+  on('profitExcludedOpen', 'click', openProfitCustomerExclusions);
   on('profitStartClear', 'click', () => {
     if (confirm('לכלול את כל ההיסטוריה בחישוב הרווח?\n\nכולל ההזמנות שיובאו מהגיליון הישן, שאין להן מחירי עלות.')) {
       saveProfitStart(null);
