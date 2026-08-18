@@ -343,9 +343,9 @@ const isWaitingForInvoice = (o) =>
 // כרטיס "דורש טיפול" — משימות פתוחות בלבד, בראש הדשבורד.
 function renderActionCard() {
   const live    = db.orders.filter((o) => !isArchived(o));
-  const pending = live
+  const pending = keepSplitOrdersTogether(live
     .filter((o) => o.status === 'pending' && !o.future_order_at)
-    .sort((a, b) => Number(b.pending_position || 0) - Number(a.pending_position || 0));
+    .sort((a, b) => Number(b.pending_position || 0) - Number(a.pending_position || 0)));
   const toInv   = db.orders.filter(isWaitingForInvoice);
   const openRet = db.returns.filter((r) => r.status === 'pending');
   const box = $('pendingList');
@@ -363,7 +363,7 @@ function renderActionCard() {
       ${list.slice(0, 8).map((o) => `
         <div class="act-row" data-order="${o.id}">
           <div class="grow">
-            <div class="bold">#${o.order_number} · ${esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—')}</div>
+            <div class="bold">#${o.order_number} · ${esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—')} ${splitOrderChip(o)}</div>
             <div class="small muted">${fmtNum(o.total_units)} יח׳ · ${fmtDate(o.created_at, false)}${o.total_amount > 0 ? ' · ' + fmtMoney(o.total_amount) : ''}</div>
           </div>
           ${next === 'invoice'
@@ -533,6 +533,9 @@ const invoiceButton = (orderId, label = '⬇️ הורדת חשבונית') => {
 };
 const isArchived = (o) => !!o.archived_at;
 const canArchive = (o) => !o.archived_at && o.status !== 'pending';
+const splitOrderChip = (o) => o?.split_from_order_id
+  ? '<span class="chip violet" title="הזמנה זו נוצרה מפיצול של הזמנה אחרת">✂️ פוצלה</span>'
+  : '';
 
 // עונה הבאה יושבת לצד הארכיון, ולא לצד המשימות הממתינות.
 const ORDER_BUCKETS = ['pending', ...STATUS_FLOW.slice(1), 'archive', 'future', 'cancelled'];
@@ -838,6 +841,30 @@ function inBucket(o, bucket) {
   return o.status === bucket;
 }
 
+// שומר הזמנות מפוצלות צמודות להזמנת המקור בלי לפגוע בסדר הידני של הרשימה.
+function keepSplitOrdersTogether(orders) {
+  const ids = new Set(orders.map((order) => order.id));
+  const children = new Map();
+  for (const order of orders) {
+    if (!order.split_from_order_id || !ids.has(order.split_from_order_id)) continue;
+    if (!children.has(order.split_from_order_id)) children.set(order.split_from_order_id, []);
+    children.get(order.split_from_order_id).push(order);
+  }
+
+  const roots = orders.filter((order) => !order.split_from_order_id || !ids.has(order.split_from_order_id));
+  const result = [];
+  const seen = new Set();
+  const append = (order) => {
+    if (seen.has(order.id)) return;
+    seen.add(order.id);
+    result.push(order);
+    for (const child of children.get(order.id) || []) append(child);
+  };
+  roots.forEach(append);
+  orders.forEach(append);
+  return result;
+}
+
 function futureFolderSettings(orderCount) {
   const selected = new Set(db.futureCollections.map((x) => x.collection_id));
   const collections = db.collections.filter((c) => c.is_active !== false);
@@ -923,6 +950,7 @@ function renderOrders() {
         .some((v) => String(v || '').toLowerCase().includes(q));
     });
   }
+  orders = keepSplitOrdersTogether(orders);
   const archiveTotal = orders.length;
   const visibleOrders = archiveView ? orders.slice(0, archiveVisible) : orders.slice(0, 400);
 
@@ -986,7 +1014,7 @@ function renderOrders() {
       const nInv = db.invoices.filter((v) => v.order_id === o.id).length;
       const note = db.orderNotes[o.id];
       return `<tr class="clickable" data-order="${o.id}">
-      ${td('הזמנה', `#${o.order_number}${note ? ' <span title="יש הערת מנהל">📝</span>' : ''}`, 'bold')}
+      ${td('הזמנה', `#${o.order_number}${note ? ' <span title="יש הערת מנהל">📝</span>' : ''} ${splitOrderChip(o)}`, 'bold')}
       ${td('לקוח', esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—'))}
       ${td('תאריך', fmtDate(o.created_at, false), 'small nowrap')}
       ${td('יחידות', fmtNum(o.total_units), 'num')}
@@ -1278,6 +1306,10 @@ function openOrder(id) {
   const itemGroups = groupOrderItemsByModel(lines);
   const invs = db.invoices.filter((v) => v.order_id === o.id);
   const editable = o.status === 'pending' && !o.stock_applied;
+  const checkedModels = itemGroups
+    .map((group) => group.model)
+    .filter((model) => (o.checked_models || []).includes(model));
+  const canSplit = editable && checkedModels.length > 0;
   const isFuture = o.status === 'pending' && !!o.future_order_at;
   // ההנחה נקבעת רק כשידוע מה באמת יוצא ללקוח
   const canDiscount = ['ready', 'shipped'].includes(o.status);
@@ -1290,6 +1322,7 @@ function openOrder(id) {
     <div class="row" style="margin-bottom:.9rem">
       ${statusChip(ORDER_STATUS, o.status)}
       ${isFuture ? `<span class="chip blue">📅 עונה הבאה${o.future_order_source === 'automatic' ? ' · אוטומטי' : ''}</span>` : ''}
+      ${splitOrderChip(o)}
       ${isArchived(o) ? '<span class="chip gray">🗄️ בארכיון</span>' : ''}
       <span class="muted small">${fmtDate(o.created_at)}</span>
     </div>
@@ -1378,6 +1411,7 @@ function openOrder(id) {
       ${o.status === 'pending' ? (isFuture
         ? `<button class="btn ghost sm" data-future-panel="${o.id}|false">↩️ החזרה לממתינות</button>`
         : `<button class="btn ghost sm" data-future-panel="${o.id}|true">📅 לעונה הבאה</button>`) : ''}
+      ${canSplit ? `<button class="btn warn sm" data-split-order="${o.id}">✂️ פצל להזמנה נפרדת</button>` : ''}
       ${canArchive(o) ? `<button class="btn ghost sm" data-archive-panel="${o.id}">🗄️ לארכיון</button>` : ''}
       ${isArchived(o) ? `<button class="btn ghost sm" data-unarchive-panel="${o.id}">↩️ מהארכיון</button>` : ''}
       <button class="btn ghost sm" data-export-order="${o.id}">⬇️ ייצוא</button>
@@ -1524,6 +1558,39 @@ async function toggleOrderModelCheck(orderId, model, checked) {
     openOrder(orderId);
   } catch (error) {
     toast(friendlyError(error), true);
+  }
+}
+
+async function splitCheckedOrder(orderId) {
+  const order = db.orders.find((item) => item.id === orderId);
+  if (!order) { toast('ההזמנה לא נמצאה', true); return; }
+
+  const availableModels = new Set((order.order_items || []).map((item) => item.model));
+  const models = (order.checked_models || []).filter((model) => availableModels.has(model));
+  if (!models.length) { toast('יש לסמן לפחות דגם אחד בווי לפני הפיצול', true); return; }
+
+  const movedUnits = (order.order_items || [])
+    .filter((item) => models.includes(item.model))
+    .reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  const seasonNote = order.future_order_at ? '\nההזמנה החדשה תישאר בתיקיית "עונה הבאה".' : '';
+  if (!confirm(`לפצל ${models.length} דגמים מסומנים (${fmtNum(movedUnits)} יחידות) מהזמנה #${order.order_number}?\n\n`
+    + `תיווצר הזמנה חדשה של אותו לקוח, וסימוני הווי יישארו עליה.${seasonNote}`)) return;
+
+  const button = $(`[data-split-order="${orderId}"]`);
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'מפצל…';
+  }
+
+  try {
+    const { data, error } = await sb.rpc('split_checked_order', { p_order_id: orderId });
+    if (error) throw error;
+    toast(`נוצרה הזמנה #${data.new_order_number} · ${fmtNum(data.moved_units)} יחידות · פוצלה מ-#${order.order_number}`);
+    await loadAll();
+    openOrder(data.new_order_id);
+  } catch (err) {
+    toast(friendlyError(err), true);
+    openOrder(orderId);
   }
 }
 
@@ -4554,7 +4621,7 @@ function wire() {
       '[data-del-order-panel]', '[data-del-return-panel]', '[data-credit]', '[data-credit-panel]',
       '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
       '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
-      '[data-resend-shipped]', '[data-model-check]', '[data-demand-model-check]',
+      '[data-resend-shipped]', '[data-model-check]', '[data-demand-model-check]', '[data-split-order]',
       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave',
@@ -4825,6 +4892,11 @@ function wire() {
     if (modelCheck) {
       const [orderId, model] = modelCheck.dataset.modelCheck.split('|');
       await toggleOrderModelCheck(orderId, model, modelCheck.getAttribute('aria-pressed') !== 'true');
+      return;
+    }
+    const splitOrder = e.target.closest('[data-split-order]');
+    if (splitOrder) {
+      await splitCheckedOrder(splitOrder.dataset.splitOrder);
       return;
     }
     const demandModelCheck = e.target.closest('[data-demand-model-check]');
