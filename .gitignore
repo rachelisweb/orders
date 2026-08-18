@@ -15,6 +15,8 @@
 !/v2/supabase/functions/icount-invoice/**
 !/v2/supabase/functions/order-email/
 !/v2/supabase/functions/order-email/**
+!/v2/supabase/functions/cloudinary-upload/
+!/v2/supabase/functions/cloudinary-upload/**
 !/v2/supabase/migrations/
 /v2/supabase/migrations/*
 !/v2/supabase/migrations/20260806120000_order_archive_customer_pricing_icount.sql
@@ -43,3 +45,7 @@
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/
+
+# סודות מקומיים לעולם אינם נכנסים למאגר, גם בתוך תיקיות שהוחרגו לעיל.
+**/.env
+**/.env.*

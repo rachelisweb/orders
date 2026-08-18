@@ -2601,8 +2601,14 @@ function editProduct(id) {
         `<option value="${c.id}" ${p?.collection_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
     <div class="field"><label>תיאור קצר</label>
       <textarea id="pDesc" rows="2" placeholder="חומר, גזרה, פרטים…">${esc(p?.description || '')}</textarea></div>
-    <div class="field"><label>קישור לתמונה</label>
-      <input type="text" id="pImage" value="${esc(p?.image_url || '')}" placeholder="https://res.cloudinary.com/…"></div>
+    <div class="field"><label>תמונה</label>
+      <div class="product-image-source">
+        <input type="text" id="pImage" value="${esc(p?.image_url || '')}" placeholder="הדבקת קישור לתמונה…">
+        <button type="button" class="btn ghost product-image-pick" id="pImagePick">📷 העלאת תמונה</button>
+        <input type="file" id="pImageFile" accept="image/jpeg,image/png,image/webp" hidden>
+      </div>
+      <div class="small muted product-image-hint" id="pImageStatus">JPG, PNG או WebP · התמונה תישמר ב־Cloudinary בשם מספר הדגם</div>
+    </div>
     <div id="pPreview" style="margin-bottom:.9rem"></div>
 
     <div class="note small">
@@ -2645,11 +2651,70 @@ function editProduct(id) {
       ? `רווח ליחידה: <b>${fmtMoney(pr)}</b> · מרווח <b>${mg.toFixed(1)}%</b>`
       : 'הזן מחיר סיטונאי כדי לראות את הרווח';
   };
+  let imageUploading = false;
+  const setImageUploading = (busy, message = '') => {
+    imageUploading = busy;
+    if ($('pImagePick')) {
+      $('pImagePick').disabled = busy;
+      $('pImagePick').textContent = busy ? '⏳ מעלה…' : '📷 העלאת תמונה';
+    }
+    if ($('pSave')) $('pSave').disabled = busy;
+    if ($('pImageStatus') && message) $('pImageStatus').textContent = message;
+  };
+  const uploadImage = async (file) => {
+    const model = $('pModel').value.trim();
+    if (!model) {
+      toast('יש להזין מספר דגם לפני העלאת תמונה', true);
+      $('pModel').focus();
+      return;
+    }
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      toast('אפשר להעלות תמונת JPG, PNG או WebP בלבד', true);
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast('התמונה גדולה מדי. הגודל המרבי הוא 10MB', true);
+      return;
+    }
+
+    setImageUploading(true, 'מכווץ ומעלה את התמונה ל־Cloudinary…');
+    try {
+      const optimized = await compressImage(file, 1600, 0.82);
+      const body = new FormData();
+      const extension = optimized.type === 'image/jpeg' ? 'jpg' : (file.name.split('.').pop() || 'jpg');
+      body.append('file', optimized, `${model}.${extension}`);
+      body.append('model', model);
+      const { data, error } = await sb.functions.invoke('cloudinary-upload', { body });
+      if (error) {
+        let message = error.message || 'העלאת התמונה נכשלה';
+        try {
+          const details = await error.context?.json();
+          if (details?.error) message = details.error;
+        } catch { /* תגובת שגיאה ללא JSON */ }
+        throw new Error(message);
+      }
+      if (!data?.ok || !data?.secure_url) throw new Error(data?.error || 'Cloudinary לא החזיר קישור לתמונה');
+      $('pImage').value = data.secure_url;
+      preview();
+      setImageUploading(false, '✓ התמונה הועלתה ל־Cloudinary והקישור נוסף אוטומטית');
+      toast('התמונה הועלתה בהצלחה');
+    } catch (err) {
+      setImageUploading(false, 'ההעלאה נכשלה — אפשר לנסות שוב או להדביק קישור לתמונה');
+      toast(friendlyError(err), true);
+    } finally {
+      if ($('pImageFile')) $('pImageFile').value = '';
+    }
+  };
+
   preview(); showMargin();
   on('pImage', 'input', debounce(preview, 400));
+  on('pImagePick', 'click', () => $('pImageFile')?.click());
+  on('pImageFile', 'change', (event) => uploadImage(event.target.files?.[0]));
   ['pCost', 'pWholesale'].forEach((f) => on(f, 'input', showMargin));
 
   on('pSave', 'click', async () => {
+    if (imageUploading) { toast('יש להמתין לסיום העלאת התמונה', true); return; }
     const model = $('pModel').value.trim();
     if (!model) { toast('חסר מספר דגם', true); return; }
 
@@ -4723,7 +4788,7 @@ function wire() {
       '[data-resend-shipped]', '[data-model-check]', '[data-demand-model-check]', '[data-split-order]',
       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#admNotesSave', '#icountCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
-      '#pSave', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave', '#profitExcludedSave',
+      '#pSave', '#pImagePick', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave', '#profitExcludedSave',
       '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
     ].join(',');
     document.addEventListener('click', (e) => {

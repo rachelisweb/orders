@@ -1357,3 +1357,10 @@ td.pick, th.pick { width: 38px; text-align: center; }
   .card, .order-card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
   body { background: #fff; }
 }
+.product-image-source{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.55rem;align-items:center}
+.product-image-pick{white-space:nowrap;min-height:44px}
+.product-image-hint{margin-top:.4rem;line-height:1.45}
+@media(max-width:560px){
+  .product-image-source{grid-template-columns:1fr}
+  .product-image-pick{width:100%}
+}
