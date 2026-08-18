@@ -55,12 +55,9 @@ function recordValues(value: unknown) {
   ));
 }
 
-const PAYMENT_WITH_EXTRA_DETAILS = new Set(['cc', 'paypal']);
-
 async function loadIcountCapabilities(token: string) {
-  const [typesResult, paymentsResult, bankAccountsResult] = await Promise.all([
+  const [typesResult, bankAccountsResult] = await Promise.all([
     icountCall(token, 'doc/types', {}),
-    icountCall(token, 'payment_method/get_list', { list_type: 'object' }),
     icountCall(token, 'company/bank_accounts', { list_type: 'object' }).catch(() => ({})),
   ]);
 
@@ -74,12 +71,13 @@ async function loadIcountCapabilities(token: string) {
     title: String(item?.title || [item?.bank, item?.branch, item?.account].filter(Boolean).join('-') || 'חשבון בנק'),
   })).filter((item) => item.id);
 
-  const paymentMethods = recordValues(deepFind(paymentsResult, 'payment_methods')).map((item: any) => ({
-    code: String(item?.code || item?._key || '').trim().toLowerCase(),
-    name: String(item?.name_he || item?.name || item?.name_en || item?.code || item?._key || ''),
-    enabled: item?.enabled !== false && item?.enabled !== 0 && item?.enabled !== '0',
-    is_card: item?.is_card === true || item?.is_card === 1 || item?.is_card === '1',
-  })).filter((item) => item.code && item.enabled && !item.is_card && !PAYMENT_WITH_EXTRA_DETAILS.has(item.code));
+  // Bank transfers and cheques are first-class doc/create fields in iCount.
+  // They are not guaranteed to appear in payment_method/get_list, which is
+  // intended mainly for additional/generic payment methods.
+  const paymentMethods = [
+    { code: 'banktransfer', name: 'העברה בנקאית' },
+    { code: 'cheques', name: 'צ׳קים' },
+  ];
 
   return { doctypes, payment_methods: paymentMethods, bank_accounts: bankAccounts };
 }
