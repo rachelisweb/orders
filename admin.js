@@ -1869,6 +1869,16 @@ function demandBreakdown(model) {
   return [...rows.values()].sort((a, b) => b.total - a.total);
 }
 
+function demandDetailSizePills(sizes, cols) {
+  const used = cols.filter((size) => Number(sizes[size] || 0) > 0);
+  return `<div class="demand-detail-sizes">
+    ${used.map((size) => `<div class="demand-detail-size">
+      <span class="admin-order-size-label">${esc(size)}</span>
+      <b class="demand-detail-size-qty">${fmtNum(sizes[size])}</b>
+    </div>`).join('')}
+  </div>`;
+}
+
 function openDemandDetail(model) {
   const rows = demandBreakdown(model);
   if (!rows.length) return;
@@ -1938,7 +1948,8 @@ function openDemandDetail(model) {
           data-sort-key="${esc(r.customer_key)}" title="לחיצה ארוכה וגרירה לשינוי הסדר">
         ${td('לקוח', `<span class="demand-customer-main"><span class="demand-row-grip" aria-hidden="true">⠿</span>${check}<span>${esc(r.customer)}</span></span>`, 'bold')}
         ${td('הזמנות', r.orders, 'num')}
-        ${cols.map((s) => td(s, r.sizes[s] || '<span class="faint">·</span>', 'num')).join('')}
+        ${cols.map((s) => td(s, r.sizes[s] || '<span class="faint">·</span>', 'num demand-detail-size-column')).join('')}
+        ${td('מידות', demandDetailSizePills(r.sizes, cols), 'demand-detail-sizes-cell')}
         ${td('סה״כ', fmtNum(r.total), 'num bold')}
         ${td('שווי', r.amount > 0 ? fmtMoney(r.amount) : '—', 'num')}
       </tr>`; }).join('')}
@@ -1957,7 +1968,8 @@ function openDemandDetail(model) {
         ${td('לקוח', esc(r.customer))}
         ${td('תאריך', fmtDate(r.date, false), 'small nowrap')}
         ${td('סטטוס', statusChip(ORDER_STATUS, r.status))}
-        ${cols.map((s) => td(s, r.sizes[s] || '<span class="faint">·</span>', 'num')).join('')}
+        ${cols.map((s) => td(s, r.sizes[s] || '<span class="faint">·</span>', 'num demand-detail-size-column')).join('')}
+        ${td('מידות', demandDetailSizePills(r.sizes, cols), 'demand-detail-sizes-cell')}
         ${td('סה״כ', fmtNum(r.total), 'num bold')}
       </tr>`).join('')}
       </tbody></table>

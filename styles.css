@@ -929,10 +929,27 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
 .demand-model-check:disabled { opacity: .6; cursor: wait; }
 .demand-mobile-summary { display: none; }
 .dm-open-label { display: none; }
+.demand-detail-sizes-cell { display: none; }
+.demand-detail-sizes { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .45rem; }
+.demand-detail-size {
+  display: flex; flex-direction: column; align-items: center; gap: .15rem;
+}
+.demand-detail-size-qty {
+  display: flex; align-items: center; justify-content: center;
+  width: 46px; min-height: 40px; padding: 0 .25rem;
+  border: 1.5px solid var(--border-2); border-radius: 9px;
+  background: var(--surface); font-variant-numeric: tabular-nums;
+}
 
 @media (max-width: 780px) {
   .demand-sort-hint { max-width: 52%; text-align: end; }
   .demand-customer-table tbody tr.dragging { transform: scale(.99); }
+  .responsive td.demand-detail-size-column { display: none; }
+  .responsive td.demand-detail-sizes-cell {
+    display: block; width: 100%; padding: .45rem .75rem;
+  }
+  .responsive td.demand-detail-sizes-cell::before { display: none; }
+  .demand-detail-sizes { justify-content: flex-start; direction: rtl; }
 
   #tab-demand, #tab-demand .card, #demandTable { width: 100%; max-width: 100%; min-width: 0; }
   #tab-demand .card { overflow: hidden; }
