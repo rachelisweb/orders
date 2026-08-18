@@ -44,6 +44,7 @@
 !/v2/supabase/migrations/20260818160000_split_checked_order.sql
 !/v2/supabase/migrations/20260818190000_order_model_order.sql
 !/v2/supabase/migrations/20260818220000_order_bucket_order.sql
+!/v2/supabase/migrations/20260818223000_fix_order_bucket_order.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/
