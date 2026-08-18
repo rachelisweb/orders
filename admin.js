@@ -1988,20 +1988,26 @@ function renderDemand() {
   const totals = Object.fromEntries(cols.map((s) => [s, rows.reduce((a, r) => a + (r.sizes[s] || 0), 0)]));
   const grand = rows.reduce((a, r) => a + r.total, 0);
 
-  $('demandTable').innerHTML = `<div class="table-wrap"><table><thead><tr>
+  $('demandTable').innerHTML = `
+    <div class="demand-mobile-summary">
+      <span><b>${fmtNum(rows.length)}</b> דגמים</span>
+      <span><b>${fmtNum(grand)}</b> יחידות</span>
+      <span><b>${fmtMoney(rows.reduce((a, r) => a + r.amount, 0))}</b></span>
+    </div>
+    <div class="table-wrap demand-matrix-wrap"><table class="demand-matrix"><thead><tr>
       <th></th><th>דגם</th><th>קולקציה</th>
       ${cols.map((s) => `<th class="num">${esc(s)}</th>`).join('')}
       <th class="num">סה״כ</th><th class="num">לקוחות</th><th class="num">שווי</th><th></th>
     </tr></thead><tbody>
     ${rows.map((r) => `<tr class="clickable" data-dm="${esc(r.model)}">
-      <td>${r.image ? `<img class="thumb" style="width:32px;height:32px" src="${esc(img(r.image, 80))}" alt="" loading="lazy" decoding="async">` : ''}</td>
-      <td class="bold">${esc(r.model)}</td>
-      <td class="muted small">${esc(r.collection)}</td>
-      ${cols.map((s) => `<td class="num">${r.sizes[s] || '<span class="faint">·</span>'}</td>`).join('')}
-      <td class="num bold">${fmtNum(r.total)}</td>
-      <td class="num">${r.orders.size}</td>
-      <td class="num">${r.amount > 0 ? fmtMoney(r.amount) : '—'}</td>
-      <td class="num"><span class="faint">👁️</span></td>
+      <td class="dm-image">${r.image ? `<img class="thumb" style="width:32px;height:32px" src="${esc(img(r.image, 80))}" alt="" loading="lazy" decoding="async">` : ''}</td>
+      <td class="bold dm-model">${esc(r.model)}</td>
+      <td class="muted small dm-collection">${esc(r.collection)}</td>
+      ${cols.map((s) => `<td class="num dm-size" data-size="${esc(s)}">${r.sizes[s] || '<span class="faint">·</span>'}</td>`).join('')}
+      <td class="num bold dm-total">${fmtNum(r.total)}</td>
+      <td class="num dm-customers" data-label="הזמנות">${r.orders.size}</td>
+      <td class="num dm-value" data-label="שווי">${r.amount > 0 ? fmtMoney(r.amount) : '—'}</td>
+      <td class="num dm-open"><span class="faint">👁️ <span class="dm-open-label">פירוט</span></span></td>
     </tr>`).join('')}
     </tbody><tfoot><tr>
       <td colspan="3">סה״כ ${rows.length} דגמים</td>

@@ -927,10 +927,82 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
 .demand-model-check.checked { background: var(--success); border-color: var(--success); }
 .demand-model-check.partial { background: var(--warn); border-color: var(--warn); color: #78350f; }
 .demand-model-check:disabled { opacity: .6; cursor: wait; }
+.demand-mobile-summary { display: none; }
+.dm-open-label { display: none; }
 
 @media (max-width: 780px) {
   .demand-sort-hint { max-width: 52%; text-align: end; }
   .demand-customer-table tbody tr.dragging { transform: scale(.99); }
+
+  #tab-demand, #tab-demand .card, #demandTable { width: 100%; max-width: 100%; min-width: 0; }
+  #tab-demand .card { overflow: hidden; }
+  .demand-filters {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: .55rem;
+  }
+  .demand-filters > * { min-width: 0; max-width: none !important; width: 100%; }
+  .demand-filters #dmModel { grid-column: 1 / -1; grid-row: 1; }
+  .demand-filters label { grid-column: 1 / -1; min-height: 36px !important; }
+
+  .demand-mobile-summary {
+    display: flex; align-items: center; justify-content: space-between; gap: .45rem;
+    margin: .7rem 0 .55rem; padding: .55rem .65rem;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface-3); font-size: .78rem; color: var(--muted);
+  }
+  .demand-mobile-summary span { min-width: 0; text-align: center; }
+  .demand-mobile-summary b { display: block; color: var(--text); font-size: .9rem; }
+  #demandTable .demand-matrix-wrap { overflow: visible; border: 0; background: none; max-width: 100%; }
+  #demandTable .demand-matrix,
+  #demandTable .demand-matrix tbody { display: block; width: 100%; max-width: 100%; }
+  #demandTable .demand-matrix thead,
+  #demandTable .demand-matrix tfoot { display: none; }
+  #demandTable .demand-matrix tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .38rem;
+    width: 100%; max-width: 100%; margin-bottom: .6rem; padding: .6rem;
+    border: 1px solid var(--border); border-radius: var(--r);
+    background: var(--surface); box-shadow: var(--shadow);
+  }
+  #demandTable .demand-matrix td {
+    display: flex; align-items: center; min-width: 0;
+    padding: .25rem .35rem; border: 0; text-align: start;
+  }
+  #demandTable .demand-matrix .dm-image { display: none; }
+  #demandTable .demand-matrix .dm-model {
+    order: 1; flex: 1 1 30%; padding-inline-start: 0;
+    font-size: 1.05rem; overflow-wrap: anywhere;
+  }
+  #demandTable .demand-matrix .dm-collection {
+    order: 1; flex: 1 1 34%; overflow-wrap: anywhere;
+  }
+  #demandTable .demand-matrix .dm-total {
+    order: 1; flex: 0 0 auto; gap: .25rem;
+    border-radius: 999px; background: #dbeafe; color: #1e3a8a;
+  }
+  #demandTable .demand-matrix .dm-total::before { content: 'סה״כ'; font-size: .72rem; }
+  #demandTable .demand-matrix .dm-size {
+    order: 2; flex: 1 0 52px; max-width: 76px;
+    flex-direction: column; justify-content: center;
+    min-height: 46px; padding: .25rem;
+    border-radius: 8px; background: var(--surface-3);
+    text-align: center;
+  }
+  #demandTable .demand-matrix .dm-size::before {
+    content: attr(data-size); color: var(--muted); font-size: .7rem; font-weight: 800;
+  }
+  #demandTable .demand-matrix .dm-customers,
+  #demandTable .demand-matrix .dm-value,
+  #demandTable .demand-matrix .dm-open { order: 3; margin-top: .1rem; }
+  #demandTable .demand-matrix .dm-customers::before,
+  #demandTable .demand-matrix .dm-value::before {
+    content: attr(data-label) ':'; margin-inline-end: .25rem;
+    color: var(--muted); font-size: .72rem; font-weight: 700;
+  }
+  #demandTable .demand-matrix .dm-value { flex: 1 1 auto; }
+  #demandTable .demand-matrix .dm-open { margin-inline-start: auto; }
+  #demandTable .demand-matrix .dm-open .faint { color: var(--accent-ink); }
+  #demandTable .demand-matrix .dm-open-label { display: inline; font-weight: 700; }
 }
 
 /* ── מסך התחברות ──────────────────────────────────────── */
