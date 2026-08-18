@@ -13,6 +13,7 @@ const db = {
   collections: [], products: [], orders: [], customers: [],
   invoices: [], users: [], emails: [], settings: {},
   returns: [], returnItems: [], orderNotes: {}, futureCollections: [],
+  demandCustomerOrders: {},
 };
 
 const filters = { from: '', to: '', collection: '', customer: '', status: '', model: '' };
@@ -165,6 +166,7 @@ function loadReviewFixtures() {
   db.returnItems = [];
   db.orderNotes = {};
   db.futureCollections = [{ collection_id: db.collections[1].id }];
+  db.demandCustomerOrders = {};
   fillFilterOptions();
   const pending = db.orders.filter((o) => o.status === 'pending' && !o.future_order_at).length;
   $('cntOrders').textContent = pending;
@@ -184,7 +186,7 @@ function show(id) { ['denyScreen', 'adminScreen'].forEach((s) => $(s)?.classList
 async function loadAll() {
   $('headerSub').textContent = 'טוען…';
   try {
-    const [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols] =
+    const [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols, demandOrders] =
       await Promise.all([
         sb.from('collections').select('*').order('sort_order'),
         sb.from('products').select('*, inventory(size, qty), collections(name, slug, icon)').order('sort_order'),
@@ -202,9 +204,10 @@ async function loadAll() {
         sb.from('return_items').select('*'),
         sb.from('order_admin_notes').select('*'),
         sb.from('future_order_collections').select('*'),
+        sb.from('demand_customer_orders').select('model, customer_keys'),
       ]);
 
-    for (const r of [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols]) {
+    for (const r of [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols, demandOrders]) {
       if (r.error) throw r.error;
     }
 
@@ -231,6 +234,9 @@ async function loadAll() {
     db.returnItems = retItems.data || [];
     db.orderNotes  = Object.fromEntries((notes.data || []).map((n) => [n.order_id, n.notes || '']));
     db.futureCollections = futureCols.data || [];
+    db.demandCustomerOrders = Object.fromEntries(
+      (demandOrders.data || []).map((row) => [row.model, row.customer_keys || []]),
+    );
 
     fillFilterOptions();
 
@@ -1654,6 +1660,157 @@ function usedSizes(rows) {
   return SIZES.filter((s) => set.has(s));
 }
 
+// גרירה בהחזקה קצרה. לפני ההפעלה תנועת אצבע רגילה עדיין גוללת את הפאנל;
+// אחרי ההחזקה התנועה מסדרת את השורות ומונעת גלילה מקרית.
+function makeLongPressSortable(container, onDrop, delay = 320) {
+  if (!container) return;
+
+  let pressed = null;
+  let active = false;
+  let timer = null;
+  let startX = 0;
+  let startY = 0;
+  let orderBefore = '';
+  let lastTouchAt = 0;
+
+  const directRows = () => $$('[data-sort-key]', container)
+    .filter((row) => row.parentElement === container);
+  const ids = () => directRows().map((row) => row.dataset.sortKey);
+  const rowAt = (target) => {
+    const row = target?.closest?.('[data-sort-key]');
+    return row?.parentElement === container ? row : null;
+  };
+  const clearTimer = () => { if (timer) clearTimeout(timer); timer = null; };
+
+  const begin = () => {
+    if (!pressed) return;
+    active = true;
+    orderBefore = ids().join('\n');
+    pressed.classList.add('dragging');
+    container.classList.add('longpress-sort-active');
+    if (navigator.vibrate) navigator.vibrate(15);
+    toast('מצב סידור פעיל — גרור את השורה למקום הרצוי');
+  };
+
+  const start = (row, x, y, immediate = false) => {
+    clearTimer();
+    pressed = row;
+    active = false;
+    startX = x;
+    startY = y;
+    if (immediate) begin();
+    else timer = setTimeout(begin, delay);
+  };
+
+  const cancelBeforeActivation = () => {
+    clearTimer();
+    pressed = null;
+  };
+
+  const move = (x, y, event) => {
+    if (!pressed) return;
+    if (!active) {
+      if (Math.hypot(x - startX, y - startY) > 10) cancelBeforeActivation();
+      return;
+    }
+
+    event.preventDefault();
+    const over = rowAt(document.elementFromPoint(x, y));
+    if (over && over !== pressed) {
+      const rect = over.getBoundingClientRect();
+      const after = y > rect.top + rect.height / 2;
+      container.insertBefore(pressed, after ? over.nextSibling : over);
+    }
+
+    const scroller = container.closest('.panel-body');
+    if (scroller) {
+      const rect = scroller.getBoundingClientRect();
+      if (y < rect.top + 54) scroller.scrollTop -= 14;
+      else if (y > rect.bottom - 54) scroller.scrollTop += 14;
+    }
+  };
+
+  const finish = async () => {
+    clearTimer();
+    if (!pressed) return;
+    const dragged = pressed;
+    const changed = active && ids().join('\n') !== orderBefore;
+    pressed = null;
+    active = false;
+    dragged.classList.remove('dragging');
+    container.classList.remove('longpress-sort-active');
+    if (changed) await onDrop(ids());
+  };
+
+  container.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) return;
+    const row = rowAt(event.target);
+    if (!row) return;
+    lastTouchAt = Date.now();
+    const touch = event.touches[0];
+    start(row, touch.clientX, touch.clientY, Boolean(event.target.closest('.demand-row-grip')));
+  }, { passive: true });
+  container.addEventListener('touchmove', (event) => {
+    if (event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    move(touch.clientX, touch.clientY, event);
+  }, { passive: false });
+  container.addEventListener('touchend', finish);
+  container.addEventListener('touchcancel', finish);
+
+  const mouseMove = (event) => move(event.clientX, event.clientY, event);
+  const mouseUp = async () => {
+    window.removeEventListener('mousemove', mouseMove);
+    window.removeEventListener('mouseup', mouseUp);
+    await finish();
+  };
+  container.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || Date.now() - lastTouchAt < 700) return;
+    const row = rowAt(event.target);
+    if (!row) return;
+    start(row, event.clientX, event.clientY, Boolean(event.target.closest('.demand-row-grip')));
+    window.addEventListener('mousemove', mouseMove, { passive: false });
+    window.addEventListener('mouseup', mouseUp);
+  });
+  container.addEventListener('contextmenu', (event) => {
+    if (active) event.preventDefault();
+  });
+}
+
+function sortDemandCustomerRows(model, rows) {
+  const saved = db.demandCustomerOrders[model] || [];
+  const positions = new Map(saved.map((key, index) => [key, index]));
+  return [...rows].sort((a, b) => {
+    const aPos = positions.get(a.customer_key);
+    const bPos = positions.get(b.customer_key);
+    if (aPos !== undefined || bPos !== undefined) {
+      if (aPos === undefined) return 1;
+      if (bPos === undefined) return -1;
+      return aPos - bPos;
+    }
+    return b.total - a.total || a.customer.localeCompare(b.customer, 'he');
+  });
+}
+
+async function saveDemandCustomerOrder(model, customerKeys) {
+  const previous = db.demandCustomerOrders[model] || [];
+  db.demandCustomerOrders[model] = [...customerKeys];
+  try {
+    if (!MOCK_REVIEW) {
+      const { error } = await sb.rpc('set_demand_customer_order', {
+        p_model: model,
+        p_customer_keys: customerKeys,
+      });
+      if (error) throw error;
+    }
+    toast('סדר הלקוחות נשמר');
+  } catch (err) {
+    db.demandCustomerOrders[model] = previous;
+    toast(friendlyError(err), true);
+    openDemandDetail(model);
+  }
+}
+
 // מי הזמין דגם מסוים, וכמה — הבסיס גם למסך הפירוט וגם לגיליון הייצוא
 function demandBreakdown(model) {
   const rows = new Map();
@@ -1665,6 +1822,7 @@ function demandBreakdown(model) {
     if (!e) {
       e = {
         order_number: o.order_number,
+        customer_key: o.customer_id || `name:${o.customers?.business_name || o.customers?.name || o.contact_name || '—'}`,
         customer: o.customers?.business_name || o.customers?.name || o.contact_name || '—',
         date: o.created_at,
         status: o.status,
@@ -1690,14 +1848,17 @@ function openDemandDetail(model) {
   // מאחד לפי לקוח, כי אותו לקוח יכול להזמין את אותו דגם כמה פעמים
   const byCust = new Map();
   for (const r of rows) {
-    let e = byCust.get(r.customer);
-    if (!e) { e = { customer: r.customer, orders: 0, sizes: {}, total: 0, amount: 0 }; byCust.set(r.customer, e); }
+    let e = byCust.get(r.customer_key);
+    if (!e) {
+      e = { customer_key: r.customer_key, customer: r.customer, orders: 0, sizes: {}, total: 0, amount: 0 };
+      byCust.set(r.customer_key, e);
+    }
     e.orders++;
     for (const [s, q] of Object.entries(r.sizes)) e.sizes[s] = (e.sizes[s] || 0) + q;
     e.total += r.total;
     e.amount += r.amount;
   }
-  const custRows = [...byCust.values()].sort((a, b) => b.total - a.total);
+  const custRows = sortDemandCustomerRows(model, [...byCust.values()]);
 
   $('orderPanelTitle').textContent = `דגם ${model} — מי הזמין`;
   $('orderPanelBody').innerHTML = `
@@ -1711,15 +1872,18 @@ function openDemandDetail(model) {
       </div>
     </div>
 
-    <h4 class="bold" style="margin-bottom:.5rem">לפי לקוח (${custRows.length})</h4>
+    <div class="row" style="justify-content:space-between;margin-bottom:.5rem">
+      <h4 class="bold">לפי לקוח (${custRows.length})</h4>
+      <span class="small muted demand-sort-hint">⠿ לחיצה ארוכה וגרירה לשינוי הסדר</span>
+    </div>
     <div class="table-wrap" style="margin-bottom:1.2rem">
-      <table class="responsive"><thead><tr>
+      <table class="responsive demand-customer-table"><thead><tr>
         <th>לקוח</th><th class="num">הזמנות</th>
         ${cols.map((s) => `<th class="num">${esc(s)}</th>`).join('')}
         <th class="num">סה״כ</th><th class="num">שווי</th>
-      </tr></thead><tbody>
-      ${custRows.map((r) => `<tr>
-        ${td('לקוח', esc(r.customer), 'bold')}
+      </tr></thead><tbody id="demandCustomerRows">
+      ${custRows.map((r) => `<tr data-sort-key="${esc(r.customer_key)}" title="לחיצה ארוכה וגרירה לשינוי הסדר">
+        ${td('לקוח', `<span class="demand-row-grip" aria-hidden="true">⠿</span>${esc(r.customer)}`, 'bold')}
         ${td('הזמנות', r.orders, 'num')}
         ${cols.map((s) => td(s, r.sizes[s] || '<span class="faint">·</span>', 'num')).join('')}
         ${td('סה״כ', fmtNum(r.total), 'num bold')}
@@ -1747,6 +1911,7 @@ function openDemandDetail(model) {
     </div>`;
 
   $('orderPanelBody').onchange = null;
+  makeLongPressSortable($('demandCustomerRows'), (customerKeys) => saveDemandCustomerOrder(model, customerKeys));
   $('orderPanelFoot').innerHTML = `
     <button class="btn" data-export-model="${esc(model)}">⬇️ ייצוא הפירוט לאקסל</button>`;
   $('orderOverlay').classList.add('active');

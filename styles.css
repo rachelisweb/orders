@@ -896,6 +896,32 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
 }
 .sort-row.dragging { border-color: var(--accent); box-shadow: var(--shadow-lg); }
 
+.demand-customer-table tbody tr { cursor: grab; user-select: none; -webkit-user-select: none; }
+.demand-customer-table tbody.longpress-sort-active,
+.demand-customer-table tbody.longpress-sort-active tr { cursor: grabbing; }
+.demand-customer-table tbody tr.dragging {
+  position: relative;
+  z-index: 2;
+  background: var(--surface);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: var(--shadow-lg);
+  opacity: .88;
+}
+.demand-row-grip {
+  display: inline-block;
+  margin-inline-end: .45rem;
+  color: var(--border-2);
+  font-size: 1.15rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+@media (max-width: 780px) {
+  .demand-sort-hint { max-width: 52%; text-align: end; }
+  .demand-customer-table tbody tr.dragging { transform: scale(.99); }
+}
+
 /* ── מסך התחברות ──────────────────────────────────────── */
 .auth-wrap {
   min-height: 100vh; min-height: 100dvh;

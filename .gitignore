@@ -37,6 +37,7 @@
 !/v2/supabase/migrations/20260818121000_fix_import_future_orders_totals.sql
 !/v2/supabase/migrations/20260818122000_drop_future_order_import_rpc.sql
 !/v2/supabase/migrations/20260818130000_delete_duplicate_archived_winter_orders.sql
+!/v2/supabase/migrations/20260818140000_demand_customer_order.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/
