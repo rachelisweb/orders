@@ -1251,6 +1251,11 @@ tr.short td, tr.short { background: #fffbeb; }
 
 .modal-box.wide-modal { max-width: 820px; }
 .invoice-preview { display: flex; flex-direction: column; gap: .8rem; }
+.invoice-document-options {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem;
+  padding: .75rem; border: 1px solid #bfdbfe; border-radius: var(--r); background: #eff6ff;
+}
+.invoice-document-options .field { margin: 0; }
 .invoice-preview-head {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem;
   padding: .75rem; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-2);
@@ -1333,6 +1338,7 @@ td.pick, th.pick { width: 38px; text-align: center; }
 @media (max-width: 780px) {
   .responsive td.pick { justify-content: flex-start; }
   .archive-tools { grid-template-columns: 1fr; }
+  .invoice-document-options { grid-template-columns: 1fr; }
   .invoice-preview-head { grid-template-columns: 1fr; }
   .flex-invoice-line { grid-template-columns: 1fr 1fr; }
   .flex-description-field { grid-column: 1 / -1; }

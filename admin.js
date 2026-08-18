@@ -1442,16 +1442,17 @@ function openOrder(id) {
 
     ${editable ? `<button class="btn ghost block add-order-model-btn" data-add-order-model="${o.id}">➕ הוספת דגם להזמנה</button>` : ''}
 
-    <h4 class="bold" style="margin-bottom:.5rem">חשבוניות (${invs.length})</h4>
+    <h4 class="bold" style="margin-bottom:.5rem">מסמכים (${invs.length})</h4>
     ${invs.length
       ? invs.map((v) => `<div class="row small" style="padding:.4rem 0;border-bottom:1px solid var(--border)">
           <button class="invoice-file-link" data-dl="${esc(v.file_path)}"
             data-name="${esc(v.file_name || `invoice-${v.invoice_number || o.order_number}.pdf`)}">
             ${esc(v.invoice_number || v.file_name || '—')}</button>
+          ${invoiceDocumentChip(v)}
           <span class="grow"></span>
           <span>${v.amount != null ? fmtMoney(v.amount) : ''}</span>
         </div>`).join('')
-      : '<div class="small muted">טרם הועלתה חשבונית</div>'}
+      : '<div class="small muted">טרם הועלה מסמך</div>'}
   `;
 
   const next = ORDER_STATUS[o.status].next;
@@ -3780,6 +3781,25 @@ function endOfMonthISO(date = new Date()) {
   return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
 }
 
+const ICOUNT_DOC_LABELS = {
+  receipt: 'קבלה',
+  invrec: 'חשבונית מס + קבלה',
+  invoice: 'חשבונית מס',
+};
+const icountDocLabel = (doctype) => ICOUNT_DOC_LABELS[doctype] || 'מסמך';
+
+async function loadIcountDocumentCapabilities() {
+  if (LOCAL_REVIEW) return {
+    doctypes: [{ code: 'receipt', title: 'קבלה' }, { code: 'invrec', title: 'חשבונית מס + קבלה' }],
+    payment_methods: [{ code: 'cash', name: 'מזומן' }, { code: 'banktransfer', name: 'העברה בנקאית' }],
+    bank_accounts: [{ id: '1', title: 'חשבון בנק לדוגמה' }],
+  };
+  const { data, error } = await sb.functions.invoke('icount-invoice', { body: { action: 'health' } });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || 'לא ניתן לטעון את אפשרויות iCount');
+  return data;
+}
+
 function buildInvoicePreview(order) {
   const grouped = new Map();
   for (const item of order.order_items || []) {
@@ -3803,32 +3823,70 @@ function buildInvoicePreview(order) {
   return { items, subtotal, discount, beforeVat, vat, total: Math.round((beforeVat + vat) * 100) / 100 };
 }
 
-function openIcountInvoicePreview(orderId) {
+async function openIcountInvoicePreview(orderId) {
   const order = db.orders.find((o) => o.id === orderId);
   if (!order) return;
-  if (order.status !== 'ready') { toast('ניתן להפיק חשבונית רק להזמנה שמוכנה לאיסוף', true); return; }
-  if (latestInvoice(order.id)) { toast('כבר קיימת חשבונית להזמנה — ניתן להוריד אותה', true); return; }
+  if (order.status !== 'ready') { toast('ניתן להפיק מסמך רק להזמנה שמוכנה לאיסוף', true); return; }
+  if (latestInvoice(order.id)) { toast('כבר קיים מסמך להזמנה — ניתן להוריד אותו', true); return; }
 
   const customer = db.customers.find((c) => c.id === order.customer_id);
   const p = buildInvoicePreview(order);
   const clientName = customer?.business_name || customer?.name || order.contact_name || '';
   const date = todayISO();
-  const paydate = endOfMonthISO(new Date(`${date}T12:00:00`));
+
+  modal(`הפקת מסמך להזמנה #${order.order_number}`, `
+    <div class="empty"><div class="ico">🧾</div>טוען אפשרויות מ־iCount…</div>
+  `, true);
+
+  let capabilities;
+  try {
+    capabilities = await loadIcountDocumentCapabilities();
+  } catch (error) {
+    modal(`הפקת מסמך להזמנה #${order.order_number}`, `
+      <div class="note danger-note">לא ניתן לטעון את סוגי המסמכים ואמצעי התשלום מ־iCount.</div>
+      <div class="err-msg show">${esc(friendlyError(error))}</div>
+    `, true);
+    return;
+  }
+
+  const availableDocTypes = (capabilities.doctypes || [])
+    .filter((item) => ['receipt', 'invrec'].includes(item.code));
+  const paymentMethods = capabilities.payment_methods || [];
+  const bankAccounts = capabilities.bank_accounts || [];
   const blockers = [];
   const warnings = [];
-  if (!clientName) blockers.push('חסר שם לקוח לחשבונית');
+  if (!clientName) blockers.push('חסר שם לקוח למסמך');
   if (!p.items.length) blockers.push('אין פריטים שניתן לחייב');
   if (p.items.some((x) => x.unit_price <= 0)) blockers.push('יש דגם שמחירו 0 — יש לתקן לפני ההפקה');
+  if (!availableDocTypes.length) blockers.push('קבלה וחשבונית מס + קבלה אינן זמינות בחשבון iCount');
+  if (!paymentMethods.length) blockers.push('לא נמצא אמצעי תשלום נתמך בחשבון iCount');
   if (!customer?.tax_id) warnings.push('לא הוזן ח.פ / ע.מ בכרטיס הלקוח');
   if (!customer?.address) warnings.push('לא הוזנה כתובת בכרטיס הלקוח');
 
-  modal(`תצוגה מקדימה — חשבונית להזמנה #${order.order_number}`, `
+  modal(`הפקת מסמך להזמנה #${order.order_number}`, `
     <div class="invoice-preview">
+      <div class="invoice-document-options">
+        <div class="field"><label for="icountDocType">סוג מסמך *</label>
+          <select id="icountDocType" ${availableDocTypes.length ? '' : 'disabled'}>
+            ${availableDocTypes.map((item) => `<option value="${esc(item.code)}">${esc(icountDocLabel(item.code))}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field"><label for="icountPaymentMethod">אמצעי תשלום *</label>
+          <select id="icountPaymentMethod" ${paymentMethods.length ? '' : 'disabled'}>
+            ${paymentMethods.map((item) => `<option value="${esc(item.code)}">${esc(item.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" id="icountBankAccountField" hidden><label for="icountBankAccount">חשבון בנק *</label>
+          <select id="icountBankAccount">
+            ${bankAccounts.map((item) => `<option value="${esc(item.id)}">${esc(item.title)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
       <div class="invoice-preview-head">
         <div><span class="muted small">לקוח</span><b>${esc(clientName || '—')}</b></div>
         <div><span class="muted small">ח.פ / ע.מ</span><b>${esc(customer?.tax_id || '—')}</b></div>
         <div><span class="muted small">תאריך הפקה</span><b>${fmtDate(date, false)}</b></div>
-        <div><span class="muted small">לתשלום עד</span><b>${fmtDate(paydate, false)} · סוף החודש</b></div>
+        <div><span class="muted small">תאריך תשלום</span><b>${fmtDate(date, false)}</b></div>
       </div>
       ${blockers.length ? `<div class="note danger-note small"><b>לא ניתן להפיק:</b> ${blockers.map(esc).join(' · ')}</div>` : ''}
       ${warnings.length ? `<div class="note warn small"><b>יש לבדוק:</b> ${warnings.map(esc).join(' · ')}</div>` : ''}
@@ -3849,33 +3907,55 @@ function openIcountInvoicePreview(orderId) {
         <span>מע״מ 18%</span><b>${fmtMoney(p.vat)}</b>
         <span class="invoice-grand">סה״כ כולל מע״מ</span><b class="invoice-grand">${fmtMoney(p.total)}</b>
       </div>
-      <div class="note small">iCount לא ישלח מייל. החשבונית תישמר בהזמנה ותצורף אוטומטית למייל כאשר ההזמנה תסומן כנשלחה.</div>
-      ${location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-        ? '<div class="note small">🧪 תצוגה מקומית: לא תופק חשבונית בלי פונקציית השרת והמפתח הסודי.</div>' : ''}
+      <div class="note small">iCount לא ישלח מייל. המסמך יישמר בהזמנה ויצורף אוטומטית למייל כאשר ההזמנה תסומן כנשלחה.</div>
+      ${LOCAL_REVIEW ? '<div class="note small">🧪 מצב בדיקה מקומית: ההפקה חסומה ולא תישלח בקשה ל־iCount.</div>' : ''}
       <label class="setting-check invoice-confirm">
-        <input type="checkbox" id="icountConfirm" ${blockers.length ? 'disabled' : ''}>
-        <span><b>בדקתי את הלקוח, הפריטים והסכומים</b><small>לאחר האישור תופק חשבונית מקור ב-iCount. לא ניתן למחוק אותה כאילו לא הופקה.</small></span>
+        <input type="checkbox" id="icountConfirm" ${blockers.length || LOCAL_REVIEW ? 'disabled' : ''}>
+        <span><b>בדקתי את סוג המסמך, אמצעי התשלום, הלקוח והסכומים</b><small id="icountConfirmHint">לאחר האישור יופק מסמך מקור ב־iCount.</small></span>
       </label>
       <div class="err-msg" id="icountError"></div>
-      <button class="btn block lg" id="icountCreate" disabled>אישור והפקת חשבונית</button>
+      <button class="btn block lg" id="icountCreate" disabled>אישור והפקת מסמך</button>
     </div>
   `, true);
 
-  on('icountConfirm', 'change', () => { $('icountCreate').disabled = !$('icountConfirm').checked || blockers.length > 0; });
+  const updateIcountDocumentOptions = () => {
+    const doctype = $('icountDocType')?.value || '';
+    const paymentMethod = $('icountPaymentMethod')?.value || '';
+    const needsBank = paymentMethod === 'banktransfer';
+    $('icountBankAccountField').hidden = !needsBank;
+    const bankMissing = needsBank && !$('icountBankAccount')?.value;
+    $('icountConfirm').checked = false;
+    $('icountConfirm').disabled = blockers.length > 0 || bankMissing || LOCAL_REVIEW;
+    $('icountCreate').disabled = true;
+    $('icountCreate').textContent = `אישור והפקת ${icountDocLabel(doctype)}`;
+    $('icountConfirmHint').textContent = `לאחר האישור תופק ${icountDocLabel(doctype)} מקור ב־iCount. לא ניתן למחוק אותה כאילו לא הופקה.`;
+  };
+  on('icountDocType', 'change', updateIcountDocumentOptions);
+  on('icountPaymentMethod', 'change', updateIcountDocumentOptions);
+  on('icountBankAccount', 'change', updateIcountDocumentOptions);
+  updateIcountDocumentOptions();
+  on('icountConfirm', 'change', () => {
+    $('icountCreate').disabled = !$('icountConfirm').checked || blockers.length > 0 || LOCAL_REVIEW;
+  });
   on('icountCreate', 'click', async () => {
     if (!$('icountConfirm').checked) return;
     const btn = $('icountCreate');
     const errorBox = $('icountError');
+    const doctype = $('icountDocType').value;
     btn.disabled = true;
     btn.textContent = 'מפיק ושומר… אין לסגור';
     errorBox.classList.remove('show');
     try {
       const { data, error } = await sb.functions.invoke('icount-invoice', {
-        body: { action: 'create', order_id: order.id, doc_date: date, paydate },
+        body: {
+          action: 'create', order_id: order.id, doctype,
+          payment_method: $('icountPaymentMethod').value,
+          bank_account_id: $('icountBankAccount')?.value || null,
+        },
       });
       if (error) throw error;
-      if (!data?.ok) throw new Error(data?.error || 'הפקת החשבונית נכשלה');
-      toast(`חשבונית ${data.invoice_number || ''} הופקה ונשמרה בהזמנה`);
+      if (!data?.ok) throw new Error(data?.error || 'הפקת המסמך נכשלה');
+      toast(`${data.document_title || icountDocLabel(doctype)} ${data.invoice_number || ''} הופקה ונשמרה בהזמנה`);
       closeModal();
       await loadAll();
       openOrder(order.id);
@@ -3883,7 +3963,7 @@ function openIcountInvoicePreview(orderId) {
       errorBox.textContent = friendlyError(err);
       errorBox.classList.add('show');
       btn.disabled = false;
-      btn.textContent = 'ניסיון חוזר';
+      btn.textContent = `ניסיון חוזר — ${icountDocLabel(doctype)}`;
     }
   });
 }
@@ -4172,6 +4252,11 @@ function invoiceDisplayAmount(invoice) {
     : (invoice.amount != null ? Number(invoice.amount) : null);
 }
 
+function invoiceDocumentChip(invoice) {
+  if (invoice.source !== 'icount') return '';
+  return ` <span class="chip violet">${esc(icountDocLabel(invoice.external_doctype))} · iCount</span>`;
+}
+
 function renderInvoices() {
   const items = filteredInvoices();
   $('invoicesCount').textContent = `(${fmtNum(items.length)})`;
@@ -4185,7 +4270,7 @@ function renderInvoices() {
     <th>מס׳</th><th>לקוח</th><th>הזמנה</th><th>תאריך</th>
     <th class="num">סכום</th><th></th></tr></thead><tbody>
     ${items.map((v) => `<tr>
-      ${td('מס׳', `${esc(v.invoice_number || '—')}${v.source === 'icount' ? ' <span class="chip violet">iCount</span>' : ''}`, 'bold')}
+      ${td('מס׳', `${esc(v.invoice_number || '—')}${invoiceDocumentChip(v)}`, 'bold')}
       ${td('לקוח', esc(v.customers?.name || '—'))}
       ${td('הזמנה', v.orders?.order_number ? '#' + v.orders.order_number : '—')}
       ${td('תאריך', fmtDate(v.issued_at, false), 'small nowrap')}
@@ -4224,7 +4309,7 @@ async function deleteInvoice(id) {
   const v = db.invoices.find((x) => x.id === id);
   if (!v) return;
   if (v.source === 'icount') {
-    toast('חשבונית שהופקה ב-iCount אינה נמחקת מהמערכת. יש לבטל או לזכות אותה ב-iCount ולשמור תיעוד.', true);
+    toast('מסמך שהופק ב-iCount אינו נמחק מהמערכת. יש לבטל או לזכות אותו ב-iCount ולשמור תיעוד.', true);
     return;
   }
   if (!confirm(`למחוק את החשבונית ${v.invoice_number || v.file_name}?\nהקובץ יימחק גם מהאחסון.`)) return;

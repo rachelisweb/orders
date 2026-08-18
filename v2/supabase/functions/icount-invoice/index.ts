@@ -47,6 +47,43 @@ function deepFind(obj: unknown, key: string): unknown {
   return undefined;
 }
 
+function recordValues(value: unknown) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value as Record<string, unknown>).map(([key, item]) => (
+    item && typeof item === 'object' ? { _key: key, ...(item as Record<string, unknown>) } : { _key: key }
+  ));
+}
+
+const PAYMENT_WITH_EXTRA_DETAILS = new Set(['cc', 'cheques', 'paypal']);
+
+async function loadIcountCapabilities(token: string) {
+  const [typesResult, paymentsResult, bankAccountsResult] = await Promise.all([
+    icountCall(token, 'doc/types', {}),
+    icountCall(token, 'payment_method/get_list', { list_type: 'object' }),
+    icountCall(token, 'company/bank_accounts', { list_type: 'object' }).catch(() => ({})),
+  ]);
+
+  const doctypes = recordValues(deepFind(typesResult, 'doctypes')).map((item: any) => ({
+    code: String(item?.doctype || item?._key || ''),
+    title: String(item?.title || item?.name || item?.doctype || item?._key || ''),
+  })).filter((item) => item.code);
+
+  const bankAccounts = recordValues(deepFind(bankAccountsResult, 'bank_accounts')).map((item: any) => ({
+    id: String(item?.account_id || item?._key || ''),
+    title: String(item?.title || [item?.bank, item?.branch, item?.account].filter(Boolean).join('-') || 'חשבון בנק'),
+  })).filter((item) => item.id);
+
+  const paymentMethods = recordValues(deepFind(paymentsResult, 'payment_methods')).map((item: any) => ({
+    code: String(item?.code || item?._key || '').trim().toLowerCase(),
+    name: String(item?.name_he || item?.name || item?.name_en || item?.code || item?._key || ''),
+    enabled: item?.enabled !== false && item?.enabled !== 0 && item?.enabled !== '0',
+    is_card: item?.is_card === true || item?.is_card === 1 || item?.is_card === '1',
+  })).filter((item) => item.code && item.enabled && !item.is_card && !PAYMENT_WITH_EXTRA_DETAILS.has(item.code));
+
+  return { doctypes, payment_methods: paymentMethods, bank_accounts: bankAccounts };
+}
+
 async function icountCall(token: string, path: string, body: Record<string, unknown>) {
   const response = await fetch(`${ICOUNT_BASE}/${path}`, {
     method: 'POST',
@@ -143,11 +180,12 @@ Deno.serve(async (req) => {
     if (body.action === 'health') {
       const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
       if (!token) return jsonResponse({ ok: false, error: 'ICOUNT_API_TOKEN לא הוגדר בפונקציית השרת' }, 503);
-      const result = await icountCall(token, 'doc/types', {});
+      const capabilities = await loadIcountCapabilities(token);
       return jsonResponse({
         ok: true,
         mode: 'read_only',
-        invoice_type_available: JSON.stringify(result).toLowerCase().includes('invoice'),
+        invoice_type_available: capabilities.doctypes.some((item) => item.code === 'invoice'),
+        ...capabilities,
       });
     }
 
@@ -366,16 +404,53 @@ Deno.serve(async (req) => {
     const totalWithVat = round2(beforeVat + vat);
     const docDate = israelToday();
     const paydate = endOfMonth(docDate);
-    const fingerprint = await sha256({
+    const doctypeWasProvided = Boolean(body?.doctype);
+    const doctype = String(body?.doctype || 'invoice');
+    if (!['invoice', 'receipt', 'invrec'].includes(doctype)) {
+      return jsonResponse({ ok: false, error: 'סוג המסמך אינו נתמך' }, 400);
+    }
+    const documentTitle = doctype === 'receipt' ? 'קבלה'
+      : doctype === 'invrec' ? 'חשבונית מס + קבלה' : 'חשבונית מס';
+    const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
+    if (!token) return jsonResponse({ ok: false, error: 'ICOUNT_API_TOKEN לא הוגדר בפונקציית השרת' }, 503);
+
+    const paymentMethod = String(body?.payment_method || '');
+    const bankAccountId = String(body?.bank_account_id || '');
+    let paymentFields: Record<string, unknown> = {};
+    if (doctype === 'receipt' || doctype === 'invrec') {
+      const capabilities = await loadIcountCapabilities(token);
+      if (!capabilities.doctypes.some((item) => item.code === doctype)) {
+        return jsonResponse({ ok: false, error: `${documentTitle} אינה זמינה בחשבון iCount` }, 409);
+      }
+      const method = capabilities.payment_methods.find((item) => item.code === paymentMethod);
+      if (!method) return jsonResponse({ ok: false, error: 'אמצעי התשלום אינו זמין ב-iCount' }, 409);
+
+      if (paymentMethod === 'cash') {
+        paymentFields = { cash: { sum: totalWithVat } };
+      } else if (paymentMethod === 'banktransfer') {
+        const account = capabilities.bank_accounts.find((item) => item.id === bankAccountId);
+        if (!account) return jsonResponse({ ok: false, error: 'יש לבחור חשבון בנק לקבלת ההעברה' }, 409);
+        paymentFields = { banktransfer: { sum: totalWithVat, date: docDate, account: Number(account.id) } };
+      } else if (paymentMethod === 'barter') {
+        paymentFields = { barter: { sum: totalWithVat } };
+      } else {
+        paymentFields = { payments: { [paymentMethod]: { sum: totalWithVat, payment_date: docDate } } };
+      }
+    }
+
+    const fingerprintBase: Record<string, unknown> = {
       order_id: order.id, customer_id: order.customer_id, clientName,
       tax_id: customer?.tax_id || '', address: customer?.address || '',
       lines, discount, subtotal, docDate, paydate, vat: VAT_PERCENT,
-    });
-    const preview = { lines, subtotal, discount, before_vat: beforeVat, vat, total_with_vat: totalWithVat, doc_date: docDate, paydate };
+    };
+    if (doctypeWasProvided) Object.assign(fingerprintBase, { doctype, paymentMethod, bankAccountId });
+    const fingerprint = await sha256(fingerprintBase);
+    const preview = {
+      lines, subtotal, discount, before_vat: beforeVat, vat, total_with_vat: totalWithVat,
+      doc_date: docDate, paydate, doctype, document_title: documentTitle, payment_method: paymentMethod,
+    };
     if (body.action === 'preview') return jsonResponse({ ok: true, preview, fingerprint });
 
-    const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
-    if (!token) return jsonResponse({ ok: false, error: 'ICOUNT_API_TOKEN לא הוגדר בפונקציית השרת' }, 503);
     const sanity = `rcl-${order.order_number}-${String(order.id).replace(/-/g, '').slice(0, 12)}`.slice(0, 30);
     const { data: claim, error: claimError } = await service.rpc('claim_icount_invoice_generation', {
       p_order_id: orderId, p_fingerprint: fingerprint, p_sanity_string: sanity,
@@ -391,27 +466,31 @@ Deno.serve(async (req) => {
     const { data: generation } = await service.from('icount_invoice_generations').select('*').eq('order_id', orderId).single();
     externalDocnum = generation?.external_docnum || '';
     let docUrl = generation?.external_url || '';
+    const externalDoctype = String(generation?.external_doctype || doctype);
     if (!externalDocnum) {
       let created: any;
       try {
         created = await icountCall(token, 'doc/create', {
-          doctype: 'invoice',
+          doctype,
           custom_client_id: customer.id,
           vat_id: String(customer.tax_id || '').replace(/\D/g, '') || undefined,
           email: customer.email || order.email || undefined,
           client_name: clientName,
           client_address: [customer.address, customer.city].filter(Boolean).join(', ') || undefined,
           doc_date: docDate,
-          paydate,
+          ...(doctype === 'invoice' ? { paydate } : {}),
           currency_code: 'ILS',
-          vat_percent: VAT_PERCENT,
-          items: lines.map((x) => ({
-            sku: x.model,
-            description: x.description ? `${x.model} — ${x.description}` : x.model,
-            quantity: x.quantity,
-            unitprice: x.unitprice,
-          })),
-          discount: discount || undefined,
+          ...(doctype === 'receipt' ? {} : {
+            vat_percent: VAT_PERCENT,
+            items: lines.map((x) => ({
+              sku: x.model,
+              description: x.description ? `${x.model} — ${x.description}` : x.model,
+              quantity: x.quantity,
+              unitprice: x.unitprice,
+            })),
+            discount: discount || undefined,
+          }),
+          ...paymentFields,
           hwc: `הזמנה #${order.order_number}`,
           sanity_string: sanity,
           doc_lang: 'he',
@@ -431,7 +510,7 @@ Deno.serve(async (req) => {
       externalCreated = true;
       if (!externalDocnum) throw new Error('iCount יצר מסמך אך לא החזיר מספר מסמך — ההפקה נעצרה לבדיקה');
       await service.from('icount_invoice_generations').update({
-        external_doctype: 'invoice', external_docnum: externalDocnum, external_url: docUrl,
+        external_doctype: doctype, external_docnum: externalDocnum, external_url: docUrl,
         updated_at: new Date().toISOString(),
       }).eq('order_id', orderId);
     } else {
@@ -439,21 +518,21 @@ Deno.serve(async (req) => {
     }
 
     const info = await icountCall(token, 'doc/info', {
-      doctype: 'invoice', docnum: Number(externalDocnum), get_items: false,
+      doctype: externalDoctype, docnum: Number(externalDocnum), get_items: false,
       get_payments: false, get_pdf_link: true, lang: 'he',
     });
     const pdfLink = String(deepFind(info, 'pdf_link') || '');
-    if (!pdfLink) throw new Error('החשבונית הופקה אך iCount לא החזיר קישור PDF — ניתן לנסות שוב בבטחה');
+    if (!pdfLink) throw new Error(`${documentTitle} הופקה אך iCount לא החזיר קישור PDF — ניתן לנסות שוב בבטחה`);
     const pdfResponse = await fetch(pdfLink);
-    if (!pdfResponse.ok) throw new Error(`החשבונית הופקה אך הורדת ה-PDF נכשלה (${pdfResponse.status})`);
+    if (!pdfResponse.ok) throw new Error(`${documentTitle} הופקה אך הורדת ה-PDF נכשלה (${pdfResponse.status})`);
     const pdf = new Uint8Array(await pdfResponse.arrayBuffer());
     const pdfSignature = String.fromCharCode(...pdf.slice(0, 4));
     if (pdf.length < 500 || pdfSignature !== '%PDF') {
-      throw new Error('iCount החזיר קובץ שאינו PDF — החשבונית לא נשמרה בהזמנה');
+      throw new Error(`iCount החזיר קובץ שאינו PDF — ${documentTitle} לא נשמרה בהזמנה`);
     }
 
-    const fileName = `RACHELI-S-invoice-${externalDocnum}.pdf`;
-    const path = `${customer.id}/icount_${externalDocnum}_${Date.now()}.pdf`;
+    const fileName = `RACHELI-S-${externalDoctype}-${externalDocnum}.pdf`;
+    const path = `${customer.id}/icount_${externalDoctype}_${externalDocnum}_${Date.now()}.pdf`;
     const { error: uploadError } = await service.storage.from('invoices').upload(path, pdf, {
       contentType: 'application/pdf', upsert: false,
     });
@@ -470,7 +549,7 @@ Deno.serve(async (req) => {
       issued_at: docDate,
       uploaded_by: user.id,
       source: 'icount',
-      external_doctype: 'invoice',
+      external_doctype: externalDoctype,
       external_docnum: externalDocnum,
       external_url: docUrl || null,
     }).select('id, invoice_number, file_path').single();
@@ -482,7 +561,10 @@ Deno.serve(async (req) => {
     await service.from('icount_invoice_generations').update({
       status: 'succeeded', invoice_id: invoice.id, error: null, updated_at: new Date().toISOString(),
     }).eq('order_id', orderId);
-    return jsonResponse({ ok: true, invoice_number: externalDocnum, invoice_id: invoice.id, total_with_vat: totalWithVat });
+    return jsonResponse({
+      ok: true, invoice_number: externalDocnum, invoice_id: invoice.id,
+      total_with_vat: totalWithVat, doctype: externalDoctype, document_title: documentTitle,
+    });
   } catch (error) {
     console.error(error);
     if (flexibleRequestId) {
