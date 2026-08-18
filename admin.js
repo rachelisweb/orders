@@ -1606,11 +1606,12 @@ function openAddOrderModel(orderId) {
 // ריכוז לפי דגם
 // ============================================================
 // סינון ייעודי ללשונית הריכוז
-const dmFilters = { collection: '', model: '', status: '' };
+const dmFilters = { collection: '', model: '', status: '', includeArchived: false };
 
 function demandItems() {
   const q = dmFilters.model.trim().toLowerCase();
   return filteredItems().filter((it) => {
+    if (!dmFilters.includeArchived && isArchived(it.order)) return false;
     if (q && !it.model.toLowerCase().includes(q)) return false;
     if (dmFilters.collection && productCollection(it.model) !== dmFilters.collection) return false;
     if (dmFilters.status && it.order.status !== dmFilters.status) return false;
@@ -4492,10 +4493,12 @@ function wire() {
     dmFilters.collection = $('dmCollection').value;
     dmFilters.model      = $('dmModel').value;
     dmFilters.status     = $('dmStatus').value;
+    dmFilters.includeArchived = $('dmIncludeArchive').checked;
     renderDemand();
   };
   on('dmCollection', 'change', applyDm);
   on('dmStatus', 'change', applyDm);
+  on('dmIncludeArchive', 'change', applyDm);
   on('dmModel', 'input', debounce(applyDm, 250));
   on('exportDemandSupplier', 'click', exportDemandSupplier);
   on('exportProfit', 'click', exportProfit);

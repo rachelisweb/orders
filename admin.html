@@ -126,10 +126,14 @@
           <select id="dmStatus" style="max-width:190px">
             <option value="">כל הסטטוסים</option>
           </select>
+          <label class="row small" style="min-height:44px;white-space:nowrap;cursor:pointer">
+            <input type="checkbox" id="dmIncludeArchive"> כולל הזמנות מהארכיון
+          </label>
         </div>
         <div class="note small">
           כמה יחידות הוזמנו מכל דגם בפילוח מידות. <b>לחיצה על שורה</b> פותחת פירוט
-          מי הזמין וכמה. "טופס לספק" מייצר קובץ נקי בלי מחירים ובלי שמות לקוחות.
+          מי הזמין וכמה. ברירת המחדל אינה כוללת את הארכיון. "טופס לספק" מייצר קובץ
+          נקי בלי מחירים ובלי שמות לקוחות.
         </div>
         <div id="demandTable"></div>
       </div>
@@ -417,6 +421,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="admin.js?v=20260809-2"></script>
+<script type="module" src="admin.js?v=20260818-1"></script>
 </body>
 </html>
