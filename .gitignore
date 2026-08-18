@@ -1,5 +1,6 @@
 # סביבת הפיתוח כוללת מיגרציות, פונקציות וקובצי מעבר עם נתונים פנימיים.
 # ל-GitHub Pages עולים רק קובצי האתר הסטטיים שבשורש המאגר.
+/.codex-tmp/
 /v2/
 
 # רק הקוד החדש של iCount נשמר בגרסאות. יתר סביבת v2 כוללת קובצי
@@ -32,6 +33,9 @@
 !/v2/supabase/migrations/20260814173000_hide_inventory_from_guests.sql
 !/v2/supabase/migrations/20260814180000_allow_guest_order_source.sql
 !/v2/supabase/migrations/20260816180000_validate_guest_cart.sql
+!/v2/supabase/migrations/20260818120000_import_future_orders_rpc.sql
+!/v2/supabase/migrations/20260818121000_fix_import_future_orders_totals.sql
+!/v2/supabase/migrations/20260818122000_drop_future_order_import_rpc.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/
