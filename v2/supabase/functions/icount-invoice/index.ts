@@ -64,7 +64,7 @@ function icountClientSummary(value: any) {
     email: String(value?.email || ''),
     phone: String(value?.mobile || value?.phone || ''),
     city: String(value?.bus_city || ''),
-    address: [value?.bus_street, value?.bus_no, value?.bus_city].filter(Boolean).join(' '),
+    address: [value?.bus_street, value?.bus_no].filter(Boolean).join(' '),
   };
 }
 
@@ -256,9 +256,21 @@ Deno.serve(async (req) => {
         const info = await icountCall(token, 'client/info', { client_id: clientId });
         const client = icountClientSummary(deepFind(info, 'client_info'));
         if (!client.client_id) throw new Error('כרטיס הלקוח לא נמצא ב־iCount');
+        const localEmails = Array.isArray(customer.email_recipients) ? customer.email_recipients : [];
+        const importedEmail = String(client.email || '').trim().toLowerCase();
+        const emailRecipients = [...new Set([
+          ...localEmails.map((email: unknown) => String(email || '').trim().toLowerCase()),
+          String(customer.email || '').trim().toLowerCase(), importedEmail,
+        ].filter(Boolean))];
         const { error } = await service.from('customers').update({
           icount_client_id: client.client_id, icount_client_name: client.name,
           icount_linked_at: new Date().toISOString(), icount_linked_by: user.id,
+          tax_id: customer.tax_id || client.vat_id || null,
+          phone: customer.phone || client.phone || null,
+          email: customer.email || client.email || null,
+          email_recipients: emailRecipients,
+          city: customer.city || client.city || null,
+          address: customer.address || client.address || null,
         }).eq('id', customerId);
         if (error) throw error;
         return jsonResponse({ ok: true, client });

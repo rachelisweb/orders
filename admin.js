@@ -3911,8 +3911,7 @@ async function openIcountCustomerLink(customerId, onLinked = null) {
   modal(`קישור ${customer.business_name || customer.name} ל־iCount`, `
     ${customer.icount_client_id ? `<div class="note small">מקושר כעת ל־<b>${esc(customer.icount_client_name || customer.business_name || customer.name)}</b> · לקוח #${esc(customer.icount_client_id)}</div>` : ''}
     <div class="field"><label for="icountClientSearch">חיפוש ב־iCount</label>
-      <div class="row"><input id="icountClientSearch" type="search" placeholder="שם, ח.פ/ע.מ, טלפון או אימייל" style="flex:1">
-      <button class="btn sm" id="icountClientSearchBtn">חיפוש</button></div></div>
+      <input id="icountClientSearch" type="search" placeholder="שם, ח.פ/ע.מ, טלפון או אימייל"></div>
     <div class="small muted">מוצגות תחילה התאמות לפי פרטי הלקוח במערכת. יש לבדוק את הפרטים לפני הקישור.</div>
     <div id="icountClientResults"><div class="empty"><div class="ico">🔎</div>מחפש התאמות…</div></div>
     <div class="err-msg" id="icountClientError"></div>
@@ -3933,18 +3932,25 @@ async function openIcountCustomerLink(customerId, onLinked = null) {
       <td><button class="btn sm" data-select-icount-client="${esc(client.client_id)}">קישור</button></td>
     </tr>`).join('')}</tbody></table></div>` : '<div class="empty"><div class="ico">🔎</div>לא נמצאו לקוחות מתאימים</div>';
   };
+  let searchSequence = 0;
+  let searchTimer = null;
   const search = async (query = '') => {
-    $('icountClientSearchBtn').disabled = true;
+    const sequence = ++searchSequence;
     showError('icountClientError', '');
+    $('icountClientResults').innerHTML = '<div class="empty"><div class="ico">🔎</div>מחפש התאמות…</div>';
     try {
       const data = await invokeIcountCustomer('client_search', { customer_id: customerId, query });
+      if (sequence !== searchSequence) return;
       renderResults(data.clients || []);
-    } catch (error) { showLinkError(error); }
-    finally { $('icountClientSearchBtn').disabled = false; }
+    } catch (error) { if (sequence === searchSequence) showLinkError(error); }
   };
-  on('icountClientSearchBtn', 'click', () => search($('icountClientSearch').value));
+  on('icountClientSearch', 'input', () => {
+    clearTimeout(searchTimer);
+    const query = $('icountClientSearch').value.trim();
+    searchTimer = setTimeout(() => search(query), 350);
+  });
   on('icountClientSearch', 'keydown', (event) => {
-    if (event.key === 'Enter') { event.preventDefault(); search($('icountClientSearch').value); }
+    if (event.key === 'Enter') { event.preventDefault(); clearTimeout(searchTimer); search($('icountClientSearch').value.trim()); }
   });
   $('icountClientResults').onclick = async (event) => {
     const button = event.target.closest('[data-select-icount-client]');
