@@ -32,6 +32,8 @@ let newOrderCart = {};
 let newOrderSubmitting = false;
 let flexibleInvoiceRequestId = null;
 let flexibleInvoicePreviewPayload = null;
+let loadAllRequestId = 0;
+const futureOrderMutations = new Set();
 const LOCAL_REVIEW = new URLSearchParams(location.search).get('review') === '1';
 const MOCK_REVIEW = LOCAL_REVIEW
   && ['localhost', '127.0.0.1'].includes(location.hostname)
@@ -194,6 +196,7 @@ function show(id) { ['denyScreen', 'adminScreen'].forEach((s) => $(s)?.classList
 // טעינה
 // ============================================================
 async function loadAll() {
+  const requestId = ++loadAllRequestId;
   $('headerSub').textContent = 'טוען…';
   try {
     const [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols, demandOrders] =
@@ -220,6 +223,9 @@ async function loadAll() {
     for (const r of [cols, prods, available, orders, customers, customerDetails, invoices, users, emails, settings, rets, retItems, notes, futureCols, demandOrders]) {
       if (r.error) throw r.error;
     }
+    // A newer refresh already started. Do not let this older response paint
+    // stale order buckets over the latest user action.
+    if (requestId !== loadAllRequestId) return;
 
     db.collections = cols.data || [];
     const availableByProduct = new Map();
@@ -259,6 +265,7 @@ async function loadAll() {
 
     renderActiveTab();
   } catch (err) {
+    if (requestId !== loadAllRequestId) return;
     console.error(err);
     toast(friendlyError(err), true);
     $('headerSub').textContent = 'שגיאה בטעינה';
@@ -1152,6 +1159,9 @@ async function releaseFutureOrders() {
 async function setOrderFuture(id, future) {
   const order = db.orders.find((o) => o.id === id);
   if (future && !confirm(`להעביר את הזמנה #${order?.order_number} לתיקיית "הזמנות לעונה הבאה"?`)) return;
+  if (futureOrderMutations.has(id)) return;
+  futureOrderMutations.add(id);
+  $$(`[data-future-order^="${id}|"], [data-future-panel^="${id}|"]`).forEach((button) => { button.disabled = true; });
   try {
     const { error } = await sb.rpc('set_order_future', { p_order_id: id, p_future: future });
     if (error) throw error;
@@ -1162,6 +1172,10 @@ async function setOrderFuture(id, future) {
     orderStatusTab = future ? 'future' : 'pending';
     await loadAll();
   } catch (err) { toast(friendlyError(err), true); }
+  finally {
+    futureOrderMutations.delete(id);
+    $$(`[data-future-order^="${id}|"], [data-future-panel^="${id}|"]`).forEach((button) => { button.disabled = false; });
+  }
 }
 
 async function movePendingOrder(id, direction) {

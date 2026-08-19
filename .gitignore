@@ -48,6 +48,7 @@
 !/v2/supabase/migrations/20260819090000_custom_order_prices_and_icount_refunds.sql
 !/v2/supabase/migrations/20260819110000_ready_order_add_items.sql
 !/v2/supabase/migrations/20260819170000_icount_customer_links.sql
+!/v2/supabase/migrations/20260819190000_stable_future_order_override.sql
 
 # Supabase CLI link metadata is local machine state.
 /supabase/.temp/
