@@ -3545,7 +3545,8 @@ function renderCustomers() {
         ? `<div class="chip amber" style="margin-top:.25rem">חשד לכפול של ${esc(c.duplicate_candidate_business || c.duplicate_candidate_name || 'לקוח קיים')}</div>`
         : c.duplicate_status === 'rejected'
           ? '<div class="chip green" style="margin-top:.25rem">נבדק — לא כפול</div>'
-          : ''}`, 'bold')}
+          : ''}<div class="chip ${c.icount_client_id ? 'green' : 'gray'}" style="margin-top:.25rem">${c.icount_client_id
+            ? `iCount #${esc(c.icount_client_id)}` : 'לא מקושר ל־iCount'}</div>`, 'bold')}
       ${td('טלפון', c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '—', 'small nowrap')}
       ${td('הזמנות', fmtNum(c.orders_count), 'num')}
       ${td('יחידות', fmtNum(c.total_units), 'num')}
@@ -3555,6 +3556,7 @@ function renderCustomers() {
                 <button class="btn success sm" data-approve-duplicate="${c.id}" title="אישור ואיחוד">✅</button>
                 <button class="btn ghost sm" data-reject-duplicate="${c.id}" title="אינו כפול">✖️</button>` : ''}
                 <button class="btn ghost sm" data-edit-cust="${c.id}" title="עריכת לקוח">✏️</button>
+                <button class="btn ghost sm" data-icount-link="${c.id}" title="${c.icount_client_id ? 'שינוי קישור iCount' : 'קישור ל־iCount'}">🧾</button>
                 <button class="btn ghost sm" data-merge-cust="${c.id}" title="איחוד לתוך לקוח אחר">🔗</button>
                 <button class="btn danger sm" data-delete-cust="${c.id}" title="מחיקת לקוח">🗑️</button>`, 'nowrap')}
     </tr>`).join('')}
@@ -3571,6 +3573,8 @@ function renderCustomers() {
     if (mg) { e.stopPropagation(); mergeCustomers(mg.dataset.mergeCust); return; }
     const ed = e.target.closest('[data-edit-cust]');
     if (ed) { e.stopPropagation(); editCustomer(ed.dataset.editCust); return; }
+    const icount = e.target.closest('[data-icount-link]');
+    if (icount) { e.stopPropagation(); openIcountCustomerLink(icount.dataset.icountLink); return; }
     const row = e.target.closest('[data-customer]');
     if (row) openCustomer(row.dataset.customer);
   };
@@ -3749,6 +3753,13 @@ function openCustomer(id) {
             : '<span class="chip gray">מחיר סיטונאי רגיל</span>'}
         <button class="btn ghost sm" data-edit-cust="${c.id}">עריכת הגדרות</button>
       </div>
+      <div class="customer-settings-summary">
+        <span class="bold">🧾 iCount</span>
+        ${c.icount_client_id
+          ? `<span class="chip green">מקושר: ${esc(c.icount_client_name || c.business_name || c.name)} · #${esc(c.icount_client_id)}</span>`
+          : '<span class="chip amber">לא מקושר</span>'}
+        <button class="btn ghost sm" data-icount-link="${c.id}">${c.icount_client_id ? 'שינוי קישור' : 'קישור ללקוח'}</button>
+      </div>
     </div>
 
     <h4 class="bold" style="margin:.9rem 0 .5rem">דגמים מובילים</h4>
@@ -3886,6 +3897,85 @@ const ICOUNT_DOC_LABELS = {
 };
 const icountDocLabel = (doctype) => ICOUNT_DOC_LABELS[doctype] || 'מסמך';
 
+async function invokeIcountCustomer(action, payload) {
+  if (LOCAL_REVIEW) throw new Error('קישור ל־iCount אינו זמין במצב בדיקה מקומית');
+  const { data, error } = await sb.functions.invoke('icount-invoice', { body: { action, ...payload } });
+  if (error) throw error;
+  if (!data?.ok) throw new Error(data?.error || 'פעולת iCount נכשלה');
+  return data;
+}
+
+async function openIcountCustomerLink(customerId, onLinked = null) {
+  const customer = db.customers.find((item) => item.id === customerId);
+  if (!customer) return;
+  modal(`קישור ${customer.business_name || customer.name} ל־iCount`, `
+    ${customer.icount_client_id ? `<div class="note small">מקושר כעת ל־<b>${esc(customer.icount_client_name || customer.business_name || customer.name)}</b> · לקוח #${esc(customer.icount_client_id)}</div>` : ''}
+    <div class="field"><label for="icountClientSearch">חיפוש ב־iCount</label>
+      <div class="row"><input id="icountClientSearch" type="search" placeholder="שם, ח.פ/ע.מ, טלפון או אימייל" style="flex:1">
+      <button class="btn sm" id="icountClientSearchBtn">חיפוש</button></div></div>
+    <div class="small muted">מוצגות תחילה התאמות לפי פרטי הלקוח במערכת. יש לבדוק את הפרטים לפני הקישור.</div>
+    <div id="icountClientResults"><div class="empty"><div class="ico">🔎</div>מחפש התאמות…</div></div>
+    <div class="err-msg" id="icountClientError"></div>
+    <div class="row" style="margin-top:1rem">
+      <button class="btn ghost sm" id="icountCreateClient">➕ יצירת לקוח חדש ב־iCount</button>
+      ${customer.icount_client_id ? '<button class="btn danger sm" id="icountUnlinkClient">ביטול הקישור</button>' : ''}
+    </div>
+  `, true);
+
+  const showLinkError = (error) => showError('icountClientError', friendlyError(error));
+  const renderResults = (clients) => {
+    $('icountClientResults').innerHTML = clients.length ? `<div class="table-wrap" style="margin-top:.7rem"><table><thead><tr>
+      <th>לקוח</th><th>ח.פ/ע.מ</th><th>טלפון ואימייל</th><th>כתובת</th><th></th>
+    </tr></thead><tbody>${clients.map((client) => `<tr>
+      <td><b>${esc(client.name || 'ללא שם')}</b><div class="small muted">iCount #${esc(client.client_id)}</div></td>
+      <td>${esc(client.vat_id || '—')}</td><td>${esc([client.phone, client.email].filter(Boolean).join(' · ') || '—')}</td>
+      <td>${esc(client.address || client.city || '—')}</td>
+      <td><button class="btn sm" data-select-icount-client="${esc(client.client_id)}">קישור</button></td>
+    </tr>`).join('')}</tbody></table></div>` : '<div class="empty"><div class="ico">🔎</div>לא נמצאו לקוחות מתאימים</div>';
+  };
+  const search = async (query = '') => {
+    $('icountClientSearchBtn').disabled = true;
+    showError('icountClientError', '');
+    try {
+      const data = await invokeIcountCustomer('client_search', { customer_id: customerId, query });
+      renderResults(data.clients || []);
+    } catch (error) { showLinkError(error); }
+    finally { $('icountClientSearchBtn').disabled = false; }
+  };
+  on('icountClientSearchBtn', 'click', () => search($('icountClientSearch').value));
+  on('icountClientSearch', 'keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); search($('icountClientSearch').value); }
+  });
+  $('icountClientResults').onclick = async (event) => {
+    const button = event.target.closest('[data-select-icount-client]');
+    if (!button) return;
+    if (!confirm('לקשר את כרטיס הלקוח הזה? הבחירה תישמר לכל המסמכים העתידיים.')) return;
+    button.disabled = true;
+    try {
+      await invokeIcountCustomer('client_link', { customer_id: customerId, icount_client_id: Number(button.dataset.selectIcountClient) });
+      toast('הלקוח קושר ל־iCount'); closeModal(); await loadAll();
+      if (onLinked) onLinked(); else openCustomer(customerId);
+    } catch (error) { showLinkError(error); button.disabled = false; }
+  };
+  on('icountCreateClient', 'click', async () => {
+    if (!confirm(`ליצור ב־iCount לקוח חדש בשם "${customer.business_name || customer.name}"?\n\nיש לבצע זאת רק לאחר שווידאת שהלקוח אינו קיים.`)) return;
+    $('icountCreateClient').disabled = true;
+    try {
+      await invokeIcountCustomer('client_create', { customer_id: customerId });
+      toast('הלקוח נוצר וקושר ב־iCount'); closeModal(); await loadAll();
+      if (onLinked) onLinked(); else openCustomer(customerId);
+    } catch (error) { showLinkError(error); $('icountCreateClient').disabled = false; }
+  });
+  if ($('icountUnlinkClient')) on('icountUnlinkClient', 'click', async () => {
+    if (!confirm('לבטל את הקישור? מסמכים קיימים לא יועברו, ולא ניתן יהיה להפיק מסמך חדש עד לקישור מחדש.')) return;
+    try {
+      await invokeIcountCustomer('client_unlink', { customer_id: customerId });
+      toast('הקישור ל־iCount בוטל'); closeModal(); await loadAll(); openCustomer(customerId);
+    } catch (error) { showLinkError(error); }
+  });
+  search();
+}
+
 async function loadIcountDocumentCapabilities() {
   if (LOCAL_REVIEW) return {
     doctypes: [
@@ -3961,6 +4051,7 @@ async function openIcountInvoicePreview(orderId) {
   if (!p.items.length) blockers.push('אין פריטים שניתן לחייב');
   if (p.items.some((x) => x.unit_price <= 0)) blockers.push('יש דגם שמחירו 0 — יש לתקן לפני ההפקה');
   if (!availableDocTypes.length) blockers.push('סוגי המסמכים המבוקשים אינם זמינים בחשבון iCount');
+  if (!customer?.icount_client_id) blockers.push('הלקוח עדיין לא קושר לכרטיס ב־iCount');
   if (!customer?.tax_id) warnings.push('לא הוזן ח.פ / ע.מ בכרטיס הלקוח');
   if (!customer?.address) warnings.push('לא הוזנה כתובת בכרטיס הלקוח');
 
@@ -3995,6 +4086,14 @@ async function openIcountInvoicePreview(orderId) {
         <div><span class="muted small">תאריך הפקה</span><b>${fmtDate(date, false)}</b></div>
         <div><span class="muted small" id="icountDateLabel">לתשלום עד</span><b id="icountDateValue">${fmtDate(endOfMonthISO(new Date(`${date}T12:00:00`)), false)}</b></div>
       </div>
+      <div class="note small">
+        <b>כרטיס iCount:</b>
+        ${customer?.icount_client_id
+          ? `<span class="chip green">${esc(customer.icount_client_name || clientName)} · #${esc(customer.icount_client_id)}</span>
+             <button type="button" class="btn ghost sm" id="icountChangeCustomerLink">שינוי קישור</button>`
+          : `<span class="chip amber">לא מקושר</span>
+             <button type="button" class="btn sm" id="icountChangeCustomerLink">חיפוש וקישור לקוח</button>`}
+      </div>
       ${blockers.length ? `<div class="note danger-note small"><b>לא ניתן להפיק:</b> ${blockers.map(esc).join(' · ')}</div>` : ''}
       ${warnings.length ? `<div class="note warn small"><b>יש לבדוק:</b> ${warnings.map(esc).join(' · ')}</div>` : ''}
       <div class="table-wrap"><table><thead><tr>
@@ -4026,6 +4125,7 @@ async function openIcountInvoicePreview(orderId) {
   `, true);
 
   let chequeRows = [{ sum: p.total.toFixed(2), date, bank: '', branch: '', account: '', number: '' }];
+  on('icountChangeCustomerLink', 'click', () => openIcountCustomerLink(customer.id, () => openIcountInvoicePreview(order.id)));
   const readChequeRows = () => $$('#icountCheques .icount-cheque-row').map((row) => ({
     sum: row.querySelector('[data-cheque="sum"]').value,
     date: row.querySelector('[data-cheque="date"]').value,
@@ -5632,6 +5732,8 @@ function wire() {
 
     const ecst = e.target.closest('[data-edit-cust]');
     if (ecst && ecst.closest('#customerPanelBody')) { editCustomer(ecst.dataset.editCust); return; }
+    const icountLink = e.target.closest('[data-icount-link]');
+    if (icountLink && icountLink.closest('#customerPanelBody')) { openIcountCustomerLink(icountLink.dataset.icountLink); return; }
     const customerOrder = e.target.closest('[data-customer-order]');
     if (customerOrder && customerOrder.closest('#customerPanelBody')) {
       $('customerOverlay').classList.remove('active');

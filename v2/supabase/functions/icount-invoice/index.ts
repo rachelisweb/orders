@@ -55,6 +55,25 @@ function recordValues(value: unknown) {
   ));
 }
 
+function icountClientSummary(value: any) {
+  return {
+    client_id: Number(value?.client_id || value?._key || 0),
+    custom_client_id: String(value?.custom_client_id || ''),
+    vat_id: String(value?.vat_id || ''),
+    name: String(value?.company_name || value?.client_name || [value?.fname, value?.lname].filter(Boolean).join(' ') || ''),
+    email: String(value?.email || ''),
+    phone: String(value?.mobile || value?.phone || ''),
+    city: String(value?.bus_city || ''),
+    address: [value?.bus_street, value?.bus_no, value?.bus_city].filter(Boolean).join(' '),
+  };
+}
+
+function icountClientList(value: any) {
+  return recordValues(deepFind(value, 'clients'))
+    .map(icountClientSummary)
+    .filter((client) => Number.isInteger(client.client_id) && client.client_id > 0);
+}
+
 async function loadIcountCapabilities(token: string) {
   const [typesResult, bankAccountsResult] = await Promise.all([
     icountCall(token, 'doc/types', {}),
@@ -171,7 +190,7 @@ Deno.serve(async (req) => {
     if (profile?.role !== 'admin') return jsonResponse({ ok: false, error: 'הפקת חשבונית מותרת למנהל בלבד' }, 403);
 
     const body = await req.json();
-    if (!['health', 'preview', 'create', 'refund_preview', 'refund_create', 'flexible_preview', 'flexible_create'].includes(body?.action)) {
+    if (!['health', 'client_search', 'client_link', 'client_create', 'client_unlink', 'preview', 'create', 'refund_preview', 'refund_create', 'flexible_preview', 'flexible_create'].includes(body?.action)) {
       return jsonResponse({ ok: false, error: 'action לא חוקי' }, 400);
     }
 
@@ -186,6 +205,99 @@ Deno.serve(async (req) => {
         invoice_type_available: capabilities.doctypes.some((item) => item.code === 'invoice'),
         ...capabilities,
       });
+    }
+
+    if (['client_search', 'client_link', 'client_create', 'client_unlink'].includes(body.action)) {
+      const customerId = String(body.customer_id || '');
+      if (!/^[0-9a-f-]{36}$/i.test(customerId)) return jsonResponse({ ok: false, error: 'מזהה לקוח לא תקין' }, 400);
+      const { data: customer, error: customerError } = await service.from('customers').select('*').eq('id', customerId).maybeSingle();
+      if (customerError || !customer) return jsonResponse({ ok: false, error: 'הלקוח לא נמצא' }, 404);
+
+      if (body.action === 'client_unlink') {
+        const { error } = await service.from('customers').update({
+          icount_client_id: null, icount_client_name: null, icount_linked_at: null, icount_linked_by: null,
+        }).eq('id', customerId);
+        if (error) throw error;
+        return jsonResponse({ ok: true });
+      }
+
+      const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
+      if (!token) return jsonResponse({ ok: false, error: 'ICOUNT_API_TOKEN לא הוגדר בפונקציית השרת' }, 503);
+
+      if (body.action === 'client_search') {
+        const query = String(body.query || '').trim().slice(0, 120);
+        const searches: Record<string, unknown>[] = [];
+        if (query) {
+          searches.push({ client_name: query });
+          if (query.includes('@')) searches.push({ email: query });
+          const digits = query.replace(/\D/g, '');
+          if (digits.length >= 5) searches.push({ vat_id: digits }, { phone: digits }, { mobile: digits });
+        } else {
+          const vatId = String(customer.tax_id || '').replace(/\D/g, '');
+          const phone = String(customer.phone || '').replace(/\D/g, '');
+          const email = String(customer.email || '').trim();
+          const name = String(customer.business_name || customer.name || '').trim();
+          if (vatId) searches.push({ vat_id: vatId });
+          if (phone) searches.push({ phone }, { mobile: phone });
+          if (email) searches.push({ email });
+          if (name) searches.push({ client_name: name });
+        }
+        const results = await Promise.all(searches.slice(0, 6).map((filter) =>
+          icountCall(token, 'client/get_list', { ...filter, detail_level: 3, limit: 30, list_type: 'array' }).catch(() => ({}))
+        ));
+        const unique = new Map<number, ReturnType<typeof icountClientSummary>>();
+        results.flatMap(icountClientList).forEach((client) => unique.set(client.client_id, client));
+        return jsonResponse({ ok: true, clients: [...unique.values()].slice(0, 50) });
+      }
+
+      if (body.action === 'client_link') {
+        const clientId = Number(body.icount_client_id);
+        if (!Number.isInteger(clientId) || clientId <= 0) return jsonResponse({ ok: false, error: 'מספר לקוח iCount אינו תקין' }, 400);
+        const info = await icountCall(token, 'client/info', { client_id: clientId });
+        const client = icountClientSummary(deepFind(info, 'client_info'));
+        if (!client.client_id) throw new Error('כרטיס הלקוח לא נמצא ב־iCount');
+        const { error } = await service.from('customers').update({
+          icount_client_id: client.client_id, icount_client_name: client.name,
+          icount_linked_at: new Date().toISOString(), icount_linked_by: user.id,
+        }).eq('id', customerId);
+        if (error) throw error;
+        return jsonResponse({ ok: true, client });
+      }
+
+      const clientName = String(customer.business_name || customer.name || '').trim();
+      if (!clientName) return jsonResponse({ ok: false, error: 'חסר שם לקוח' }, 400);
+      // Recovery/idempotency: a previous call may have created the iCount card
+      // and failed before the local link was saved. Reuse it instead of creating a duplicate.
+      const existingByCustomId = await icountCall(token, 'client/get_list', {
+        custom_client_id: customer.id, detail_level: 1, limit: 2, list_type: 'array',
+      }).catch(() => ({}));
+      const recovered = icountClientList(existingByCustomId)[0];
+      if (recovered?.client_id) {
+        const { error } = await service.from('customers').update({
+          icount_client_id: recovered.client_id, icount_client_name: recovered.name || clientName,
+          icount_linked_at: new Date().toISOString(), icount_linked_by: user.id,
+        }).eq('id', customerId);
+        if (error) throw error;
+        return jsonResponse({ ok: true, client: recovered, recovered: true });
+      }
+      const created = await icountCall(token, 'client/create', {
+        custom_client_id: customer.id,
+        client_name: clientName,
+        vat_id: String(customer.tax_id || '').replace(/\D/g, '') || undefined,
+        email: customer.email || undefined,
+        phone: customer.phone || undefined,
+        bus_city: customer.city || undefined,
+        bus_street: customer.address || undefined,
+        notes: 'נוצר ממערכת ההזמנות',
+      });
+      const clientId = Number(deepFind(created, 'client_id') || 0);
+      if (!clientId) throw new Error('iCount יצר לקוח אך לא החזיר מספר לקוח');
+      const { error } = await service.from('customers').update({
+        icount_client_id: clientId, icount_client_name: clientName,
+        icount_linked_at: new Date().toISOString(), icount_linked_by: user.id,
+      }).eq('id', customerId);
+      if (error) throw error;
+      return jsonResponse({ ok: true, client: { client_id: clientId, name: clientName }, created: true });
     }
 
     if (body.action === 'refund_preview' || body.action === 'refund_create') {
@@ -281,6 +393,7 @@ Deno.serve(async (req) => {
       const vat = round2(subtotal * VAT_PERCENT / 100);
       const totalWithVat = round2(subtotal + vat);
       const clientName = customer.business_name || customer.name || returnRow.returner_name;
+      if (!customer.icount_client_id) return jsonResponse({ ok: false, error: 'יש לקשר את הלקוח לכרטיס iCount לפני הפקת זיכוי' }, 409);
       const docDate = israelToday();
       const fingerprint = await sha256({
         return_id: returnId, customer_id: customer.id, clientName, lines, subtotal, vat: VAT_PERCENT, docDate,
@@ -323,7 +436,7 @@ Deno.serve(async (req) => {
         try {
           created = await icountCall(token, 'doc/create', {
             doctype: 'refund',
-            custom_client_id: customer.id,
+            client_id: customer.icount_client_id,
             vat_id: String(customer.tax_id || '').replace(/\D/g, '') || undefined,
             email: customer.email || undefined,
             client_name: clientName,
@@ -418,6 +531,7 @@ Deno.serve(async (req) => {
       const customerId = String(body?.customer_id || '');
       const { data: customer, error: customerError } = await service.from('customers').select('*').eq('id', customerId).single();
       if (customerError || !customer) return jsonResponse({ ok: false, error: 'הלקוח לא נמצא' }, 404);
+      if (!customer.icount_client_id) return jsonResponse({ ok: false, error: 'יש לקשר את הלקוח לכרטיס iCount לפני הפקת מסמך' }, 409);
 
       const clientName = String(body?.client_name || '').trim().slice(0, 200);
       if (!clientName) return jsonResponse({ ok: false, error: 'חסר שם לקוח לחשבונית' }, 400);
@@ -483,7 +597,7 @@ Deno.serve(async (req) => {
         try {
           const created = await icountCall(token, 'doc/create', {
           doctype: 'invoice',
-          custom_client_id: customer.id,
+          client_id: customer.icount_client_id,
           vat_id: vatId || undefined,
           email: email || undefined,
           client_name: clientName,
@@ -585,7 +699,7 @@ Deno.serve(async (req) => {
     if (!orderId) return jsonResponse({ ok: false, error: 'חסר order_id' }, 400);
 
     const { data: order, error: orderError } = await service.from('orders')
-      .select('*, order_items(id, product_id, model, size, qty, unit_price), customers(id, name, business_name, email, phone, city, address, tax_id)')
+      .select('*, order_items(id, product_id, model, size, qty, unit_price), customers(id, name, business_name, email, phone, city, address, tax_id, icount_client_id, icount_client_name)')
       .eq('id', orderId).single();
     if (orderError || !order) throw orderError || new Error('ההזמנה לא נמצאה');
     if (order.status !== 'ready') return jsonResponse({ ok: false, error: 'ניתן להפיק חשבונית רק להזמנה שמוכנה לאיסוף' }, 409);
@@ -608,6 +722,7 @@ Deno.serve(async (req) => {
     if (lines.some((x) => x.unitprice <= 0)) return jsonResponse({ ok: false, error: 'יש פריט במחיר 0 — ההפקה נעצרה' }, 409);
     const customer = order.customers;
     if (!customer?.id) return jsonResponse({ ok: false, error: 'להזמנה אין כרטיס לקוח משויך' }, 409);
+    if (!customer.icount_client_id) return jsonResponse({ ok: false, error: 'יש לקשר את הלקוח לכרטיס iCount לפני הפקת מסמך' }, 409);
     const clientName = customer?.business_name || customer?.name || order.contact_name;
     if (!clientName) return jsonResponse({ ok: false, error: 'חסר שם לקוח לחשבונית' }, 409);
 
@@ -719,7 +834,7 @@ Deno.serve(async (req) => {
       try {
         created = await icountCall(token, 'doc/create', {
           doctype,
-          custom_client_id: customer.id,
+          client_id: customer.icount_client_id,
           vat_id: String(customer.tax_id || '').replace(/\D/g, '') || undefined,
           email: customer.email || order.email || undefined,
           client_name: clientName,
