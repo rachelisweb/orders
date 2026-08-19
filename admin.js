@@ -1376,7 +1376,7 @@ function openOrder(id) {
   const checkedModels = itemGroups
     .map((group) => group.model)
     .filter((model) => (o.checked_models || []).includes(model));
-  const canSplit = editable && checkedModels.length > 0;
+  const canSplit = editable && itemGroups.length > 1 && checkedModels.length > 0;
   const isFuture = o.status === 'pending' && !!o.future_order_at;
   // ההנחה נקבעת רק כשידוע מה באמת יוצא ללקוח
   const canDiscount = ['ready', 'shipped'].includes(o.status);
