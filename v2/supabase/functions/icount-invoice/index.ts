@@ -7,6 +7,7 @@ const CORS = {
 };
 const ICOUNT_BASE = 'https://api.icount.co.il/api/v3.php';
 const VAT_PERCENT = 18;
+let icountClientsCache: { expiresAt: number; clients: ReturnType<typeof icountClientSummary>[] } | null = null;
 
 type OrderItem = {
   id: number; product_id: string | null; model: string; size: string;
@@ -72,6 +73,21 @@ function icountClientList(value: any) {
   return recordValues(deepFind(value, 'clients'))
     .map(icountClientSummary)
     .filter((client) => Number.isInteger(client.client_id) && client.client_id > 0);
+}
+
+const normalizeClientSearch = (value: unknown) => String(value || '')
+  .toLocaleLowerCase('he')
+  .replace(/[\s\-–—_'"״׳.,()[\]{}\/\\]+/g, '')
+  .trim();
+
+async function loadIcountClients(token: string) {
+  if (icountClientsCache && icountClientsCache.expiresAt > Date.now()) return icountClientsCache.clients;
+  const result = await icountCall(token, 'client/get_list', {
+    detail_level: 3, limit: 1000, offset: 0, list_type: 'array', sort_field: 'client_name', sort_order: 'ASC',
+  });
+  const clients = icountClientList(result);
+  icountClientsCache = { expiresAt: Date.now() + 2 * 60 * 1000, clients };
+  return clients;
 }
 
 async function loadIcountCapabilities(token: string) {
@@ -226,22 +242,23 @@ Deno.serve(async (req) => {
 
       if (body.action === 'client_search') {
         const query = String(body.query || '').trim().slice(0, 120);
-        const searches: Record<string, unknown>[] = [];
         if (query) {
-          searches.push({ client_name: query });
-          if (query.includes('@')) searches.push({ email: query });
-          const digits = query.replace(/\D/g, '');
-          if (digits.length >= 5) searches.push({ vat_id: digits }, { phone: digits }, { mobile: digits });
-        } else {
-          const vatId = String(customer.tax_id || '').replace(/\D/g, '');
-          const phone = String(customer.phone || '').replace(/\D/g, '');
-          const email = String(customer.email || '').trim();
-          const name = String(customer.business_name || customer.name || '').trim();
-          if (vatId) searches.push({ vat_id: vatId });
-          if (phone) searches.push({ phone }, { mobile: phone });
-          if (email) searches.push({ email });
-          if (name) searches.push({ client_name: name });
+          const normalized = normalizeClientSearch(query);
+          const clients = await loadIcountClients(token);
+          const matches = clients.filter((client) => [
+            client.name, client.vat_id, client.phone, client.email, client.city, client.address,
+          ].some((value) => normalizeClientSearch(value).includes(normalized)));
+          return jsonResponse({ ok: true, clients: matches.slice(0, 50) });
         }
+        const searches: Record<string, unknown>[] = [];
+        const vatId = String(customer.tax_id || '').replace(/\D/g, '');
+        const phone = String(customer.phone || '').replace(/\D/g, '');
+        const email = String(customer.email || '').trim();
+        const name = String(customer.business_name || customer.name || '').trim();
+        if (vatId) searches.push({ vat_id: vatId });
+        if (phone) searches.push({ phone }, { mobile: phone });
+        if (email) searches.push({ email });
+        if (name) searches.push({ client_name: name });
         const results = await Promise.all(searches.slice(0, 6).map((filter) =>
           icountCall(token, 'client/get_list', { ...filter, detail_level: 3, limit: 30, list_type: 'array' }).catch(() => ({}))
         ));
