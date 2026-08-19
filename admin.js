@@ -988,10 +988,6 @@ function renderOrders() {
       return `<button class="btn ghost sm" data-future-order="${o.id}|false">↩️ החזרה לממתינות</button>`;
     }
     const parts = [];
-    if (pendingView) {
-      parts.push(`<button class="btn ghost sm" data-move-pending="${o.id}|up" title="הזזה למעלה">↑</button>`);
-      parts.push(`<button class="btn ghost sm" data-move-pending="${o.id}|down" title="הזזה למטה">↓</button>`);
-    }
     if (next) {
       parts.push(`<button class="btn ${next === 'ready' ? 'success' : next === 'shipped' ? 'violet' : ''} sm"
         data-adv="${o.id}|${next}">${ORDER_STATUS[next].icon} ${esc(ORDER_STATUS[next].label)}</button>`);
@@ -3707,13 +3703,6 @@ function openCustomer(id) {
   const invs   = db.invoices.filter((v) => v.customer_id === id);
   const users  = db.users.filter((u) => u.customer_id === id);
 
-  const byM = new Map();
-  for (const o of orders) {
-    if (o.status === 'cancelled') continue;
-    for (const it of o.order_items || []) byM.set(it.model, (byM.get(it.model) || 0) + it.qty);
-  }
-  const topModels = [...byM.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
-
   $('customerPanelTitle').textContent = c.business_name || c.name;
   $('customerPanelBody').innerHTML = `
     ${c.duplicate_status === 'pending' ? `<div class="note warn small">
@@ -3761,11 +3750,6 @@ function openCustomer(id) {
         <button class="btn ghost sm" data-icount-link="${c.id}">${c.icount_client_id ? 'שינוי קישור' : 'קישור ללקוח'}</button>
       </div>
     </div>
-
-    <h4 class="bold" style="margin:.9rem 0 .5rem">דגמים מובילים</h4>
-    ${topModels.length
-      ? `<div class="lines-wrap">${topModels.map(([m, q]) => `<span class="tag">${esc(m)}: ${fmtNum(q)}</span>`).join('')}</div>`
-      : '<div class="small muted">אין הזמנות</div>'}
 
     <h4 class="bold" style="margin:1rem 0 .5rem">הזמנות (${orders.length})</h4>
     ${orders.length ? `<div class="table-wrap"><table class="responsive"><thead><tr>
