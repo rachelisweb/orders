@@ -210,6 +210,9 @@ a { color: var(--accent-ink); }
   padding: .1rem .2rem .45rem;
   font-weight: 800;
 }
+
+.act-customer-tools { align-items: center; gap: .4rem; }
+.act-customer-tools .btn { padding: .3rem .55rem; font-size: .78rem; }
 .act-customer-card .act-row { margin-bottom: .35rem; }
 .act-customer-card .act-row:last-child { margin-bottom: 0; }
 

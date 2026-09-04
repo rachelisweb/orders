@@ -417,7 +417,12 @@ function renderActionCard() {
         <div class="act-customer-card">
           <div class="act-customer-title">
             <span>${esc(customer.name)}</span>
-            ${customer.orders.length > 1 ? `<span class="chip gray">${customer.orders.length} הזמנות</span>` : ''}
+            ${customer.orders.length > 1 ? `<span class="row act-customer-tools">
+              <span class="chip gray">${customer.orders.length} הזמנות</span>
+              ${['ready', 'invoice'].includes(next)
+                ? `<button class="btn ghost sm" data-merge-orders="${customer.orders.map((o) => o.id).join(',')}">🔗 מיזוג הזמנות</button>`
+                : ''}
+            </span>` : ''}
           </div>
           ${customer.orders.map((o) => `
             <div class="act-row" data-order="${o.id}">
@@ -466,6 +471,12 @@ function renderActionCard() {
     + returnsGroup;
 
   box.onclick = async (e) => {
+    const merge = e.target.closest('[data-merge-orders]');
+    if (merge) {
+      e.stopPropagation();
+      await mergeActionOrders(merge.dataset.mergeOrders.split(',').filter(Boolean), merge);
+      return;
+    }
     const adv = e.target.closest('[data-adv]');
     if (adv) {
       e.stopPropagation();
@@ -484,6 +495,27 @@ function renderActionCard() {
     const row = e.target.closest('[data-order]');
     if (row) openOrder(row.dataset.order);
   };
+}
+
+async function mergeActionOrders(orderIds, button) {
+  const orders = orderIds.map((id) => db.orders.find((order) => order.id === id)).filter(Boolean);
+  if (orders.length < 2) { toast('לא נמצאו הזמנות למיזוג', true); return; }
+  const primary = orders.slice().sort((a, b) => Number(a.order_number) - Number(b.order_number))[0];
+  const numbers = orders.map((order) => `#${order.order_number}`).join(', ');
+  if (!confirm(`למזג את ההזמנות ${numbers} להזמנה #${primary.order_number}?\n\nכל הפריטים והכמויות ירוכזו בהזמנה אחת. פעולה זו אינה ניתנת לביטול.`)) return;
+
+  const oldText = button?.textContent;
+  if (button) { button.disabled = true; button.textContent = 'ממזג…'; }
+  try {
+    const { data, error } = await sb.rpc('merge_customer_orders', { p_order_ids: orderIds });
+    if (error) throw error;
+    toast(`ההזמנות מוזגו להזמנה #${data.order_number} · ${fmtNum(data.total_units)} יחידות`);
+    await loadAll();
+    openOrder(data.order_id);
+  } catch (error) {
+    toast(friendlyError(error), true);
+    if (button) { button.disabled = false; button.textContent = oldText; }
+  }
 }
 
 // ============================================================
