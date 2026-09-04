@@ -671,16 +671,42 @@ function selectNewOrderCustomer(customerId) {
 }
 
 function renderNewOrderCollections() {
-  // Manual admin orders use one catalog across all collections.
-  newOrderCollection = null;
-  $('newOrderCollectionTabs').innerHTML = '';
-  $('newOrderCollectionTabs').style.display = 'none';
+  const products = newOrderProducts();
+  const collections = db.collections.filter((c) =>
+    products.some((p) => p.collection_id === c.id));
+
+  if (!newOrderCollection || !collections.some((c) => c.id === newOrderCollection)) {
+    newOrderCollection = collections[0]?.id || null;
+  }
+
+  $('newOrderCollectionTabs').style.display = '';
+  $('newOrderCollectionTabs').innerHTML = collections.map((c) => {
+    const count = products.filter((p) => p.collection_id === c.id).length;
+    return `<button class="tab ${c.id === newOrderCollection ? 'active' : ''}" data-new-order-col="${c.id}">
+      ${esc(c.icon || '📦')} ${esc(c.name)} <span class="tab-count">${count}</span>
+    </button>`;
+  }).join('');
+}
+
+function searchNewOrderProducts() {
+  const q = $('newOrderProductSearch').value.trim().toLowerCase();
+  if (q) {
+    const matches = newOrderProducts().filter((p) =>
+      p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q));
+    if (matches.length && !matches.some((p) => p.collection_id === newOrderCollection)) {
+      const exact = matches.find((p) => p.model.toLowerCase() === q);
+      newOrderCollection = (exact || matches[0]).collection_id;
+      renderNewOrderCollections();
+    }
+  }
+  renderNewOrderProducts();
 }
 
 function renderNewOrderProducts() {
   const q = $('newOrderProductSearch').value.trim().toLowerCase();
   const products = newOrderProducts().filter((p) =>
-    !q || p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q));
+    p.collection_id === newOrderCollection
+    && (!q || p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)));
   const box = $('newOrderProductList');
 
   if (!products.length) {
@@ -5544,7 +5570,7 @@ function wire() {
     renderNewOrderCollections();
     renderNewOrderProducts();
   };
-  on('newOrderProductSearch', 'input', debounce(renderNewOrderProducts, 180));
+  on('newOrderProductSearch', 'input', debounce(searchNewOrderProducts, 180));
   $('newOrderProductList').oninput = (e) => {
     const input = e.target.closest('[data-new-order-qty]');
     if (input) setNewOrderQty(input);
