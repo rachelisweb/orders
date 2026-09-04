@@ -87,8 +87,7 @@ begin
       where product_id = v_product.id and size = v_size;
     if v_avail is null then raise exception 'דגם % מידה % אינו קיים במלאי', v_model, v_size; end if;
     if v_qty > v_avail then raise exception 'דגם % מידה %: ביקשת % אך יש רק % במלאי', v_model, v_size, v_qty, v_avail; end if;
-    v_price := case when v_cost_mode then v_product.cost_price else v_product.wholesale_price end;
-    if v_cost_mode and coalesce(v_price, 0) <= 0 then raise exception 'לדגם % לא הוגדר מחיר עלות — ההזמנה לא נוצרה', v_model; end if;
+    v_price := coalesce(case when v_cost_mode then v_product.cost_price else v_product.wholesale_price end, 0);
     insert into public.order_items (order_id, product_id, model, size, qty, qty_ordered, unit_price)
     values (v_order_id, v_product.id, v_product.model, v_size, v_qty, v_qty, v_price);
     v_units := v_units + v_qty; v_subtotal := v_subtotal + (v_qty * v_price);
@@ -107,3 +106,53 @@ begin
 end $$;
 
 grant execute on function public.admin_create_order(uuid, jsonb, text, jsonb) to authenticated;
+
+-- Fill only previously-missing cost prices in open, uninvoiced cost orders.
+-- Existing positive/custom prices and closed orders are deliberately untouched.
+create or replace function public.sync_missing_order_cost_price()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_order_id uuid;
+begin
+  if coalesce(new.cost_price, 0) <= 0
+     or coalesce(new.cost_price, 0) = coalesce(old.cost_price, 0) then
+    return new;
+  end if;
+
+  for v_order_id in
+    select o.id
+      from public.orders o
+     where o.pricing_mode = 'cost'
+       and o.status in ('pending', 'ready')
+       and o.archived_at is null
+       and exists (
+         select 1 from public.order_items oi
+          where oi.order_id = o.id
+            and oi.product_id = new.id
+            and coalesce(oi.unit_price, 0) <= 0
+       )
+       and not exists (
+         select 1 from public.invoices i
+          where i.order_id = o.id
+            and coalesce(i.status, 'active') <> 'cancelled'
+       )
+     for update of o
+  loop
+    update public.order_items
+       set unit_price = new.cost_price
+     where order_id = v_order_id
+       and product_id = new.id
+       and coalesce(unit_price, 0) <= 0;
+    perform public.recalc_order(v_order_id);
+  end loop;
+
+  return new;
+end $$;
+
+drop trigger if exists products_sync_missing_order_cost_price on public.products;
+create trigger products_sync_missing_order_cost_price
+after update of cost_price on public.products
+for each row execute function public.sync_missing_order_cost_price();
