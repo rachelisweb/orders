@@ -690,7 +690,7 @@ function renderNewOrderCollections() {
 function renderNewOrderProducts() {
   const q = $('newOrderProductSearch').value.trim().toLowerCase();
   const products = newOrderProducts().filter((p) =>
-    p.collection_id === newOrderCollection
+    (!q || p.collection_id === newOrderCollection)
     && (!q || p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)));
   const box = $('newOrderProductList');
 
