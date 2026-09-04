@@ -569,10 +569,10 @@ const BUCKET_META = {
 };
 const bucketMeta = (k) => ORDER_STATUS[k] || BUCKET_META[k];
 
-// ── יצירת הזמנה ידנית — אותה בחירת דגמים ומידות כמו אצל לקוח ──
+// ── יצירת הזמנה ידנית — מנהל רשאי להזמין גם דגמים שמוסתרים מלקוחות ──
 const orderableStock = (product) => product.availableStock ?? product.stock ?? {};
 const newOrderProducts = () => db.products.filter((p) =>
-  p.is_active && Object.values(orderableStock(p)).some((qty) => Number(qty) > 0));
+  Object.values(orderableStock(p)).some((qty) => Number(qty) > 0));
 
 function newOrderUnits() {
   return Object.values(newOrderCart).reduce((total, sizes) =>
@@ -673,7 +673,7 @@ function selectNewOrderCustomer(customerId) {
 function renderNewOrderCollections() {
   const products = newOrderProducts();
   const collections = db.collections.filter((c) =>
-    c.is_active && products.some((p) => p.collection_id === c.id));
+    products.some((p) => p.collection_id === c.id));
 
   if (!newOrderCollection || !collections.some((c) => c.id === newOrderCollection)) {
     newOrderCollection = collections[0]?.id || null;
@@ -712,7 +712,7 @@ function renderNewOrderProducts() {
       </div>
       <div class="product-body">
         <div class="product-top">
-          <div class="product-title">דגם ${esc(p.model)}</div>
+          <div class="product-title">דגם ${esc(p.model)}${p.is_active ? '' : ' <span class="chip gray">מוסתר מלקוחות</span>'}</div>
           <button class="btn ghost sm" data-new-order-series="${esc(p.model)}">📦 סריה</button>
         </div>
         ${p.description ? `<div class="product-desc">${esc(p.description)}</div>` : ''}
