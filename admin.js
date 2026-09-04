@@ -379,6 +379,17 @@ const isWaitingForInvoice = (o) =>
 const isWaitingToShip = (o) =>
   !isArchived(o) && o.status === 'ready' && hasInvoice(o.id);
 
+function groupActionOrdersByCustomer(orders) {
+  const groups = new Map();
+  for (const order of orders) {
+    const name = order.customers?.business_name || order.customers?.name || order.contact_name || '—';
+    const key = order.customer_id || `name:${name.trim().toLowerCase()}`;
+    if (!groups.has(key)) groups.set(key, { name, orders: [] });
+    groups.get(key).orders.push(order);
+  }
+  return [...groups.values()];
+}
+
 // כרטיס "דורש טיפול" — משימות פתוחות בלבד, בראש הדשבורד.
 function renderActionCard() {
   const live    = db.orders.filter((o) => !isArchived(o));
@@ -397,27 +408,37 @@ function renderActionCard() {
   }
   $('actionCard').classList.add('urgent');
 
-  const group = (title, list, next, cls) => !list.length ? '' : `
-    <div class="act-group">
+  const group = (title, list, next, cls) => {
+    if (!list.length) return '';
+    const customers = groupActionOrdersByCustomer(list);
+    return `<div class="act-group">
       <div class="act-title">${title} <span class="chip ${cls}">${list.length}</span></div>
-      ${list.slice(0, 8).map((o) => `
-        <div class="act-row" data-order="${o.id}">
-          <div class="grow">
-            <div class="bold">#${o.order_number} · ${esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—')} ${splitOrderChip(o)}</div>
-            <div class="small muted">${fmtNum(o.total_units)} יח׳ · ${fmtDate(o.created_at, false)}${o.total_amount > 0 ? ' · ' + fmtMoney(o.total_amount) : ''}</div>
+      ${customers.slice(0, 8).map((customer) => `
+        <div class="act-customer-card">
+          <div class="act-customer-title">
+            <span>${esc(customer.name)}</span>
+            ${customer.orders.length > 1 ? `<span class="chip gray">${customer.orders.length} הזמנות</span>` : ''}
           </div>
-          ${next === 'invoice'
-            ? `<span class="row" style="gap:.35rem">
-                 ${o.status === 'ready' && !hasInvoice(o.id)
-                   ? `<button class="btn sm" data-generate-invoice="${o.id}">🧾 הפקה</button>` : ''}
-                 <button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>
-                 ${o.status === 'ready' ? `<button class="btn violet sm" data-adv="${o.id}|shipped">🚚 נשלחה</button>` : ''}
-               </span>`
-            : `<button class="btn ${next === 'ready' ? 'success' : 'violet'} sm" data-adv="${o.id}|${next}">
-                 ${ORDER_STATUS[next].icon} ${esc(ORDER_STATUS[next].label)}</button>`}
+          ${customer.orders.map((o) => `
+            <div class="act-row" data-order="${o.id}">
+              <div class="grow">
+                <div class="bold">#${o.order_number} ${splitOrderChip(o)}</div>
+                <div class="small muted">${fmtNum(o.total_units)} יח׳ · ${fmtDate(o.created_at, false)}${o.total_amount > 0 ? ' · ' + fmtMoney(o.total_amount) : ''}</div>
+              </div>
+              ${next === 'invoice'
+                ? `<span class="row" style="gap:.35rem">
+                     ${o.status === 'ready' && !hasInvoice(o.id)
+                       ? `<button class="btn sm" data-generate-invoice="${o.id}">🧾 הפקה</button>` : ''}
+                     <button class="btn ghost sm" data-upload-inv="${o.id}">⬆️ חשבונית</button>
+                     ${o.status === 'ready' ? `<button class="btn violet sm" data-adv="${o.id}|shipped">🚚 נשלחה</button>` : ''}
+                   </span>`
+                : `<button class="btn ${next === 'ready' ? 'success' : 'violet'} sm" data-adv="${o.id}|${next}">
+                     ${ORDER_STATUS[next].icon} ${esc(ORDER_STATUS[next].label)}</button>`}
+            </div>`).join('')}
         </div>`).join('')}
-      ${list.length > 8 ? `<div class="small faint" style="padding:.3rem .2rem">ועוד ${list.length - 8}…</div>` : ''}
+      ${customers.length > 8 ? `<div class="small faint" style="padding:.3rem .2rem">ועוד ${customers.length - 8} לקוחות…</div>` : ''}
     </div>`;
+  };
 
   // חזרות ממתינות לזיכוי — לצד ההזמנות, כי זו אותה ערמת משימות
   const returnsGroup = !openRet.length ? '' : `
@@ -1374,11 +1395,11 @@ function renderAdminOrderItems(groups, editable, anyShort, checkedModels = [], o
             return `<div class="admin-order-size ${short ? 'short' : ''}">
               <span class="admin-order-size-label">${esc(line.size)}</span>
               <div class="admin-order-size-qty">
-                ${anyShort ? `<span class="small ${short ? 'qty-diff' : 'muted'}">הוזמן ${fmtNum(ordered)}</span>` : ''}
+                ${short ? `<span class="small qty-diff">הוזמן ${fmtNum(ordered)}</span>` : ''}
                 ${editable
                   ? `<input type="number" min="0" value="${line.qty}" data-item="${line.id}"
                        aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">`
-                  : `<b>${anyShort ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
+                  : `<b>${short ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
               </div>
             </div>`;
           }).join('')}

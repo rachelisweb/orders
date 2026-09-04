@@ -198,6 +198,20 @@ a { color: var(--accent-ink); }
   cursor: pointer;
 }
 .act-row:hover { background: #eff6ff; border-color: #bfdbfe; }
+.act-customer-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: .5rem;
+  margin-bottom: .55rem;
+  background: var(--surface);
+}
+.act-customer-title {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  padding: .1rem .2rem .45rem;
+  font-weight: 800;
+}
+.act-customer-card .act-row { margin-bottom: .35rem; }
+.act-customer-card .act-row:last-child { margin-bottom: 0; }
 
 .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .muted { color: var(--muted); }
