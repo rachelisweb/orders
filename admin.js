@@ -671,27 +671,16 @@ function selectNewOrderCustomer(customerId) {
 }
 
 function renderNewOrderCollections() {
-  const products = newOrderProducts();
-  const collections = db.collections.filter((c) =>
-    products.some((p) => p.collection_id === c.id));
-
-  if (!newOrderCollection || !collections.some((c) => c.id === newOrderCollection)) {
-    newOrderCollection = collections[0]?.id || null;
-  }
-
-  $('newOrderCollectionTabs').innerHTML = collections.map((c) => {
-    const count = products.filter((p) => p.collection_id === c.id).length;
-    return `<button class="tab ${c.id === newOrderCollection ? 'active' : ''}" data-new-order-col="${c.id}">
-      ${esc(c.icon || '📦')} ${esc(c.name)} <span class="tab-count">${count}</span>
-    </button>`;
-  }).join('');
+  // Manual admin orders use one catalog across all collections.
+  newOrderCollection = null;
+  $('newOrderCollectionTabs').innerHTML = '';
+  $('newOrderCollectionTabs').style.display = 'none';
 }
 
 function renderNewOrderProducts() {
   const q = $('newOrderProductSearch').value.trim().toLowerCase();
   const products = newOrderProducts().filter((p) =>
-    (!q || p.collection_id === newOrderCollection)
-    && (!q || p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q)));
+    !q || p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q));
   const box = $('newOrderProductList');
 
   if (!products.length) {
