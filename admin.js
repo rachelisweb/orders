@@ -34,6 +34,7 @@ let flexibleInvoiceRequestId = null;
 let flexibleInvoicePreviewPayload = null;
 let loadAllRequestId = 0;
 const futureOrderMutations = new Set();
+const readyQuantityEditOrders = new Set();
 const LOCAL_REVIEW = new URLSearchParams(location.search).get('review') === '1';
 const MOCK_REVIEW = LOCAL_REVIEW
   && ['localhost', '127.0.0.1'].includes(location.hostname)
@@ -1399,7 +1400,7 @@ function sortOrderItemGroups(groups, savedOrder = []) {
   });
 }
 
-function renderAdminOrderItems(groups, editable, anyShort, checkedModels = [], orderId = '') {
+function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels = [], orderId = '', modelCheckable = quantityEditable) {
   const checked = new Set(checkedModels || []);
   return `<div class="admin-order-models" aria-label="דגמי ההזמנה — לחיצה ממושכת מאפשרת שינוי סדר">
     ${groups.map((group) => {
@@ -1408,7 +1409,7 @@ function renderAdminOrderItems(groups, editable, anyShort, checkedModels = [], o
       const isChecked = checked.has(group.model);
       return `<div class="admin-order-model ${isChecked ? 'model-checked' : ''}"
         data-sort-key="${esc(group.model)}" title="לחיצה ממושכת וגרירה לשינוי הסדר">
-        ${editable ? `<button class="model-check ${isChecked ? 'checked' : ''}"
+        ${modelCheckable ? `<button class="model-check ${isChecked ? 'checked' : ''}"
           data-model-check="${orderId}|${esc(group.model)}" aria-pressed="${isChecked}"
           aria-label="${isChecked ? 'בטל סימון' : 'סמן'} דגם ${esc(group.model)}">${isChecked ? '✓' : ''}</button>` : ''}
         <div class="admin-order-model-image">
@@ -1428,7 +1429,7 @@ function renderAdminOrderItems(groups, editable, anyShort, checkedModels = [], o
               <span class="admin-order-size-label">${esc(line.size)}</span>
               <div class="admin-order-size-qty">
                 ${short ? `<span class="small qty-diff">הוזמן ${fmtNum(ordered)}</span>` : ''}
-                ${editable
+                ${quantityEditable
                   ? `<input type="number" min="0" value="${line.qty}" data-item="${line.id}"
                        aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">`
                   : `<b>${short ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
@@ -1450,6 +1451,9 @@ function openOrder(id) {
   const itemGroups = sortOrderItemGroups(groupOrderItemsByModel(lines), o.model_order);
   const invs = db.invoices.filter((v) => v.order_id === o.id);
   const editable = o.status === 'pending' && !o.stock_applied;
+  const canEditReadyQuantities = o.status === 'ready' && o.stock_applied && !isArchived(o) && !invs.length;
+  const editingReadyQuantities = canEditReadyQuantities && readyQuantityEditOrders.has(o.id);
+  const quantityEditable = editable || editingReadyQuantities;
   const canAddItems = (editable || (o.status === 'ready' && o.stock_applied)) && !isArchived(o);
   const checkedModels = itemGroups
     .map((group) => group.model)
@@ -1530,11 +1534,17 @@ function openOrder(id) {
     </div>
     <button class="btn ghost sm" id="admNotesSave" style="margin-bottom:1.1rem">שמירת ההערה</button>
 
-    <h4 class="bold" style="margin-bottom:.5rem">פריטים (${itemGroups.length} דגמים · ${lines.length} מידות)</h4>
-    ${!editable ? '<div class="note small">🔒 ההזמנה נעולה לעריכה — המלאי כבר עודכן.</div>' : ''}
+    <div class="row" style="margin-bottom:.5rem">
+      <h4 class="bold">פריטים (${itemGroups.length} דגמים · ${lines.length} מידות)</h4>
+      <span class="grow"></span>
+      ${canEditReadyQuantities ? `<button class="btn ghost sm ready-qty-edit-btn" data-ready-qty-edit="${o.id}">
+        ${editingReadyQuantities ? '✓ סיום עריכה' : '✏️ עריכת כמויות'}</button>` : ''}
+    </div>
+    ${!editable && !editingReadyQuantities ? '<div class="note small">🔒 ההזמנה נעולה לעריכה — המלאי כבר עודכן.</div>' : ''}
+    ${editingReadyQuantities ? '<div class="note warn small">שינוי הכמויות הסופיות מעדכן מיד גם את המלאי.</div>' : ''}
     ${anyShort ? '<div class="note warn small">⚠️ בשורות המסומנות הכמות שסופקה שונה ממה שהלקוח הזמין. הלקוח רואה את שתי הכמויות באזור האישי.</div>' : ''}
 
-    ${renderAdminOrderItems(itemGroups, editable, anyShort, o.checked_models, o.id)}
+    ${renderAdminOrderItems(itemGroups, quantityEditable, anyShort, o.checked_models, o.id, editable)}
 
     ${canAddItems ? `<button class="btn ghost block add-order-model-btn" data-add-order-model="${o.id}"
       ${o.status === 'ready' && invs.length ? 'disabled title="לא ניתן להוסיף פריטים לאחר שנשמר מסמך להזמנה"' : ''}>➕ הוספת פריטים להזמנה</button>` : ''}
@@ -1573,7 +1583,7 @@ function openOrder(id) {
       ${o.status === 'shipped' ? `<button class="btn ghost sm" data-resend-shipped="${o.id}">✉️ שליחת מייל מחדש</button>` : ''}
     </div>`;
 
-  if (editable) {
+  if (quantityEditable) {
     $('orderPanelBody').onchange = async (e) => {
       const inp = e.target.closest('[data-item]');
       if (inp) await editItem(inp.dataset.item, parseInt(inp.value, 10), o.id);
@@ -1702,7 +1712,9 @@ function wireOrderPanel(o, sub) {
 
 async function editItem(itemId, qty, orderId) {
   try {
-    const { data, error } = await sb.rpc('edit_order_item', {
+    const order = db.orders.find((item) => item.id === orderId);
+    const rpc = order?.status === 'ready' ? 'edit_ready_order_item' : 'edit_order_item';
+    const { data, error } = await sb.rpc(rpc, {
       p_item_id: Number(itemId), p_qty: Number.isFinite(qty) ? qty : 0,
     });
     if (error) throw error;
@@ -5728,6 +5740,18 @@ function wire() {
       const orderId = db.orders.find((o) => (o.order_items || [])
         .some((i) => String(i.id) === delItem.dataset.delItem))?.id;
       if (confirm('למחוק את השורה מההזמנה?')) await editItem(delItem.dataset.delItem, 0, orderId);
+      return;
+    }
+    const readyQtyEdit = e.target.closest('[data-ready-qty-edit]');
+    if (readyQtyEdit) {
+      const orderId = readyQtyEdit.dataset.readyQtyEdit;
+      if (readyQuantityEditOrders.has(orderId)) {
+        readyQuantityEditOrders.delete(orderId);
+        openOrder(orderId);
+      } else if (confirm('האם אתה בטוח שברצונך לשנות כמויות סופיות?')) {
+        readyQuantityEditOrders.add(orderId);
+        openOrder(orderId);
+      }
       return;
     }
     const em = e.target.closest('[data-export-model]');
