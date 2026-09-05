@@ -242,6 +242,15 @@ async function xlsx() {
   return xlsxMod;
 }
 
+/** קורא את הגיליון הראשון בקובץ Excel כמערך שורות, כולל שורת הכותרות. */
+export async function readXlsxRows(file) {
+  const XLSX = await xlsx();
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const firstSheet = wb.SheetNames[0];
+  if (!firstSheet) throw new Error('קובץ האקסל אינו מכיל גיליון');
+  return XLSX.utils.sheet_to_json(wb.Sheets[firstSheet], { header: 1, defval: '', raw: true });
+}
+
 function stamp() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');

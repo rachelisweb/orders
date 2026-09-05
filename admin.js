@@ -5,9 +5,9 @@ import {
   sb, state, IS_CONFIGURED, SIZES,
   $, $$, on, esc, img, imgTag, toast, showError, fmtDate, fmtMoney, fmtNum, td, todayISO,
   friendlyError, loadProfile, sortSizes, statusChip, debounce, compressImage,
-  makeSortable, exportXlsx, exportCsv, setCustomerPreview,
+  makeSortable, exportXlsx, exportCsv, readXlsxRows, setCustomerPreview,
   ORDER_STATUS, STATUS_FLOW, RETURN_STATUS,
-} from './lib.js';
+} from './lib.js?v=20260905-2';
 
 const db = {
   collections: [], products: [], orders: [], customers: [],
@@ -857,6 +857,126 @@ function openNewOrder() {
   renderNewOrderProducts();
   renderNewOrderSummary();
   $('newOrderOverlay').classList.add('active');
+}
+
+const IMPORT_ORDER_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '2XL', '3XL', '4XL', '5XL'];
+const normalizeImportText = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
+const normalizeImportKey = (value) => normalizeImportText(value).toLocaleLowerCase('he');
+
+function parseOrderImportRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) throw new Error('קובץ האקסל ריק');
+  const headers = rows[0].map((value) => normalizeImportText(value).toUpperCase());
+  const customerCol = headers.findIndex((value) => ['שם לקוח', 'שם הלקוח'].includes(value));
+  const modelCol = headers.indexOf('דגם');
+  if (customerCol < 0 || modelCol < 0) throw new Error('חובה לכלול את העמודות „שם לקוח” ו„דגם”');
+
+  const sizeCols = new Map();
+  for (const size of IMPORT_ORDER_SIZES) {
+    const index = headers.indexOf(size);
+    if (index < 0) throw new Error(`חסרה עמודת המידה ${size}`);
+    sizeCols.set(size, index);
+  }
+
+  const grouped = new Map();
+  const requested = new Map();
+  const errors = [];
+  rows.slice(1).forEach((row, offset) => {
+    const rowNumber = offset + 2;
+    if (!row.some((value) => normalizeImportText(value) !== '')) return;
+    const customerName = normalizeImportText(row[customerCol]);
+    const model = normalizeImportText(row[modelCol]);
+    if (!customerName) { errors.push(`שורה ${rowNumber}: חסר שם לקוח`); return; }
+    if (!model) { errors.push(`שורה ${rowNumber}: חסר דגם`); return; }
+
+    const product = db.products.find((item) => normalizeImportKey(item.model) === normalizeImportKey(model));
+    if (!product) { errors.push(`שורה ${rowNumber}: דגם ${model} לא נמצא במערכת`); return; }
+    const items = [];
+    for (const [size, index] of sizeCols) {
+      const raw = row[index];
+      if (raw === '' || raw == null) continue;
+      const qty = Number(raw);
+      if (!Number.isInteger(qty) || qty < 0) {
+        errors.push(`שורה ${rowNumber}: הכמות בדגם ${model} מידה ${size} חייבת להיות מספר שלם ולא שלילי`);
+        continue;
+      }
+      if (!qty) continue;
+      const available = Number(orderableStock(product)[size]);
+      if (!Number.isFinite(available)) {
+        errors.push(`שורה ${rowNumber}: מידה ${size} אינה מוגדרת במלאי של דגם ${model}`);
+        continue;
+      }
+      const stockKey = `${product.id}|${size}`;
+      requested.set(stockKey, (requested.get(stockKey) || 0) + qty);
+      items.push({ model: product.model, size, qty });
+    }
+    if (!items.length) {
+      if (!errors.some((error) => error.startsWith(`שורה ${rowNumber}:`))) errors.push(`שורה ${rowNumber}: לא הוזנו כמויות`);
+      return;
+    }
+    const key = normalizeImportKey(customerName);
+    if (!grouped.has(key)) grouped.set(key, { customer_name: customerName, items: [] });
+    grouped.get(key).items.push(...items);
+  });
+
+  for (const [stockKey, qty] of requested) {
+    const [productId, size] = stockKey.split('|');
+    const product = db.products.find((item) => item.id === productId);
+    const available = Number(orderableStock(product)[size] || 0);
+    if (qty > available) errors.push(`דגם ${product.model} מידה ${size}: בקובץ הוזמנו ${qty}, אך זמינות רק ${available} יחידות`);
+  }
+  if (errors.length) throw new Error(errors.slice(0, 12).join('\n') + (errors.length > 12 ? `\nועוד ${errors.length - 12} שגיאות` : ''));
+  const orders = [...grouped.values()];
+  if (!orders.length) throw new Error('לא נמצאו בקובץ שורות עם כמויות');
+  return orders;
+}
+
+async function chooseOrderImportFile() {
+  const input = $('ordersImportFile');
+  input.value = '';
+  input.click();
+}
+
+async function previewOrderImport(file) {
+  try {
+    const orders = parseOrderImportRows(await readXlsxRows(file));
+    const totalUnits = orders.reduce((sum, order) => sum + order.items.reduce((n, item) => n + item.qty, 0), 0);
+    const existingNames = new Set(db.customers.filter((c) => c.is_active !== false)
+      .flatMap((c) => [c.name, c.business_name]).filter(Boolean).map(normalizeImportKey));
+    modal('ייבוא הזמנות מאקסל', `
+      <div class="note small">ייבוא ${orders.length} הזמנות · ${fmtNum(totalUnits)} יחידות. לקוח עם שם זהה ישויך לכרטיס הקיים; שם חדש ייצור לקוח חדש.</div>
+      <div class="table-wrap"><table><thead><tr><th>לקוח</th><th>שיוך</th><th>דגמים</th><th>יחידות</th></tr></thead><tbody>
+        ${orders.map((order) => `<tr>
+          ${td('לקוח', esc(order.customer_name), 'bold')}
+          ${td('שיוך', existingNames.has(normalizeImportKey(order.customer_name)) ? '<span class="chip green">לקוח קיים</span>' : '<span class="chip blue">לקוח חדש</span>')}
+          ${td('דגמים', fmtNum(new Set(order.items.map((item) => item.model)).size))}
+          ${td('יחידות', fmtNum(order.items.reduce((sum, item) => sum + item.qty, 0)), 'bold')}
+        </tr>`).join('')}
+      </tbody></table></div>
+      <div class="err-msg" id="ordersImportError"></div>
+      <button class="btn block" id="ordersImportConfirm">יצירת ${orders.length} הזמנות</button>`, true);
+
+    $('ordersImportConfirm').onclick = async () => {
+      const button = $('ordersImportConfirm');
+      button.disabled = true;
+      button.textContent = 'יוצר הזמנות…';
+      showError('ordersImportError', '');
+      try {
+        const { data, error } = await sb.rpc('admin_import_orders', { p_orders: orders });
+        if (error) throw error;
+        closeModal();
+        orderStatusTab = 'pending';
+        toast(`נוצרו ${data.orders_created} הזמנות · ${fmtNum(data.total_units)} יחידות`);
+        await loadAll();
+        if (activeTab !== 'orders') switchTab('orders'); else renderOrders();
+      } catch (error) {
+        showError('ordersImportError', friendlyError(error));
+        button.disabled = false;
+        button.textContent = `יצירת ${orders.length} הזמנות`;
+      }
+    };
+  } catch (error) {
+    modal('לא ניתן לייבא את הקובץ', `<div class="err-msg" style="display:block;white-space:pre-line">${esc(friendlyError(error))}</div>`);
+  }
 }
 
 async function submitNewOrder() {
@@ -5574,6 +5694,11 @@ function wire() {
 
   on('exportOrdersFlat', 'click', exportOrdersFlat);
   on('newOrderBtn', 'click', openNewOrder);
+  on('ordersImportBtn', 'click', chooseOrderImportFile);
+  on('ordersImportFile', 'change', (event) => {
+    const file = event.target.files?.[0];
+    if (file) previewOrderImport(file);
+  });
   on('newOrderClear', 'click', openNewOrder);
   $('newOrderCustomerMode').onclick = (e) => {
     const button = e.target.closest('[data-new-order-mode]');
