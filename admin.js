@@ -1843,7 +1843,8 @@ function openOrder(id) {
       ${o.status === 'pending' ? (isFuture
         ? `<button class="btn ghost sm" data-future-panel="${o.id}|false">↩️ החזרה לממתינות</button>`
         : `<button class="btn ghost sm" data-future-panel="${o.id}|true">📅 לעונה הבאה</button>`) : ''}
-      ${canSplit ? `<button class="btn warn sm" data-split-order="${o.id}">✂️ פצל להזמנה נפרדת</button>` : ''}
+      ${canSplit ? `<button class="btn warn sm split-order-btn" data-split-order="${o.id}"
+        title="פצל את הדגמים המסומנים להזמנה נפרדת">✂️ פיצול</button>` : ''}
       ${canArchive(o) ? `<button class="btn ghost sm" data-archive-panel="${o.id}">🗄️ לארכיון</button>` : ''}
       ${isArchived(o) ? `<button class="btn ghost sm" data-unarchive-panel="${o.id}">↩️ מהארכיון</button>` : ''}
       <button class="btn ghost sm" data-export-order="${o.id}">⬇️ ייצוא</button>
