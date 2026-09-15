@@ -859,14 +859,26 @@ function openNewOrder() {
   $('newOrderOverlay').classList.add('active');
 }
 
-const IMPORT_ORDER_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '2XL', '3XL', '4XL', '5XL'];
+const IMPORT_ORDER_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL'];
+const IMPORT_SIZE_ALIASES = {
+  '2XL': ['2XL', 'XXL'],
+  '3XL': ['3XL', 'XXXL'],
+  '4XL': ['4XL', 'XXXXL'],
+  '5XL': ['5XL', 'XXXXXL'],
+};
 const normalizeImportText = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
 const normalizeImportKey = (value) => normalizeImportText(value).toLocaleLowerCase('he');
+
+function resolveImportStockSize(product, size) {
+  const aliases = IMPORT_SIZE_ALIASES[size] || [size];
+  return Object.keys(orderableStock(product)).find((stockSize) =>
+    aliases.includes(normalizeImportText(stockSize).toUpperCase())) || null;
+}
 
 function parseOrderImportRows(rows) {
   if (!Array.isArray(rows) || !rows.length) throw new Error('קובץ האקסל ריק');
   // The import format is positional so the wording of the header row is irrelevant:
-  // A = customer, B = model, C..L = XS..5XL.
+  // A = customer, B = model, C..K = XS..5XL. XXL and 2XL are the same size.
   const customerCol = 0;
   const modelCol = 1;
   const sizeCols = new Map(IMPORT_ORDER_SIZES.map((size, offset) => [size, offset + 2]));
@@ -896,17 +908,19 @@ function parseOrderImportRows(rows) {
         continue;
       }
       if (!qty) continue;
-      const available = Number(orderableStock(product)[size]);
+      const stockSize = resolveImportStockSize(product, size);
+      const available = stockSize == null ? NaN : Number(orderableStock(product)[stockSize]);
       if (!Number.isFinite(available)) {
-        addError(rowNumber, customerName, model, size, `המידה ${size} אינה מוגדרת במלאי של הדגם`);
+        const displaySize = size === '2XL' ? '2XL/XXL' : size;
+        addError(rowNumber, customerName, model, displaySize, `המידה ${displaySize} אינה מוגדרת במלאי של הדגם`);
         continue;
       }
-      const stockKey = `${product.id}|${size}`;
+      const stockKey = `${product.id}|${stockSize}`;
       const stockRequest = requested.get(stockKey) || { qty: 0, rows: [] };
       stockRequest.qty += qty;
       stockRequest.rows.push(rowNumber);
       requested.set(stockKey, stockRequest);
-      items.push({ model: product.model, size, qty });
+      items.push({ model: product.model, size: stockSize, qty });
     }
     if (!items.length) {
       if (!errors.some((error) => error.row === rowNumber)) {
@@ -973,7 +987,7 @@ async function previewOrderImport(file) {
     const existingNames = new Set(db.customers.filter((c) => c.is_active !== false)
       .flatMap((c) => [c.name, c.business_name]).filter(Boolean).map(normalizeImportKey));
     modal('ייבוא הזמנות מאקסל', `
-      <div class="note small">ייבוא ${orders.length} הזמנות · ${fmtNum(totalUnits)} יחידות. המיפוי נקבע לפי מיקום העמודות (A לקוח, B דגם, C–L מידות XS–5XL), ללא תלות בכותרות. לקוח עם שם זהה ישויך לכרטיס הקיים; שם חדש ייצור לקוח חדש.</div>
+      <div class="note small">ייבוא ${orders.length} הזמנות · ${fmtNum(totalUnits)} יחידות. המיפוי נקבע לפי מיקום העמודות (A לקוח, B דגם, C–K מידות XS–5XL), ללא תלות בכותרות. XXL ו־2XL מזוהים כאותה מידה. לקוח עם שם זהה ישויך לכרטיס הקיים; שם חדש ייצור לקוח חדש.</div>
       <div class="table-wrap"><table><thead><tr><th>לקוח</th><th>שיוך</th><th>דגמים</th><th>יחידות</th></tr></thead><tbody>
         ${orders.map((order) => `<tr>
           ${td('לקוח', esc(order.customer_name), 'bold')}
