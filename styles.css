@@ -223,6 +223,7 @@ a { color: var(--accent-ink); }
 .act-customer-card .act-row:last-child { margin-bottom: 0; }
 .order-customer-groups { display: grid; gap: .65rem; }
 .order-customer-card { margin-bottom: 0; }
+.invoice-upload-compact { width: 40px; min-width: 40px; padding-inline: 0; }
 
 .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .muted { color: var(--muted); }
@@ -1409,6 +1410,7 @@ td.pick, th.pick { width: 38px; text-align: center; }
     min-width: 0;
     padding-inline: .4rem;
   }
+  .act-row > .row .btn.invoice-upload-compact { flex: 0 0 40px; }
 
   .profit-exclusion-summary > .row { align-items: stretch; flex-direction: column; }
   .profit-exclusion-summary .btn { width: 100%; }

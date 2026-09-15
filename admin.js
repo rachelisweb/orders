@@ -602,12 +602,13 @@ const hasInvoice = (orderId) => db.invoices.some((v) => v.order_id === orderId);
 const latestInvoice = (orderId) => db.invoices
   .filter((v) => v.order_id === orderId && v.status !== 'cancelled')
   .sort((a, b) => new Date(b.issued_at || b.created_at) - new Date(a.issued_at || a.created_at))[0] || null;
-const invoiceButton = (orderId, label = '⬇️ הורדת חשבונית') => {
+const invoiceButton = (orderId, label = '⬇️ הורדת חשבונית', compactUpload = false) => {
   const inv = latestInvoice(orderId);
   return inv
     ? `<button class="btn ghost sm" data-dl="${esc(inv.file_path)}"
          data-name="${esc(inv.file_name || `invoice-${inv.invoice_number || orderId}.pdf`)}">${label}</button>`
-    : `<button class="btn ghost sm" data-upload-inv="${orderId}">⬆️ העלאת חשבונית</button>`;
+    : `<button class="btn ghost sm${compactUpload ? ' invoice-upload-compact' : ''}" data-upload-inv="${orderId}"
+         ${compactUpload ? 'title="העלאת חשבונית" aria-label="העלאת חשבונית">⬆️' : '>⬆️ העלאת חשבונית'}</button>`;
 };
 const isArchived = (o) => !!o.archived_at;
 const canArchive = (o) => !o.archived_at && o.status !== 'pending';
@@ -1241,7 +1242,7 @@ function renderOrders() {
       parts.push(`<button class="btn ghost sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>`);
     }
     if (['ready', 'shipped'].includes(o.status)) {
-      parts.push(invoiceButton(o.id, nInv ? '⬇️ חשבונית' : '⬆️ חשבונית'));
+      parts.push(invoiceButton(o.id, nInv ? '⬇️ חשבונית' : '⬆️ חשבונית', !nInv && groupedView));
     }
     if (canArchive(o)) {
       parts.push(`<button class="btn ghost sm" data-archive="${o.id}" title="העברה לארכיון">🗄️</button>`);
