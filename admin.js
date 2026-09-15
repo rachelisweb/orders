@@ -212,7 +212,7 @@ async function loadAll() {
         sb.from('products').select('*, inventory(size, qty), collections(name, slug, icon)').order('sort_order'),
         sb.rpc('get_available_inventory'),
         sb.from('orders')
-          .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone, email, email_recipients)')
+          .select('*, order_items(id, model, size, qty, qty_ordered, unit_price, product_id), customers(name, business_name, phone, phone_numbers, email, email_recipients)')
           .order('created_at', { ascending: false }).limit(3000),
         sb.from('v_customer_stats').select('*').order('name'),
         sb.from('customers').select('*').order('name'),
@@ -726,6 +726,19 @@ const customerEmailList = (customer) => [...new Set([
   customer?.email,
 ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
 
+const customerPhoneList = (customer, ...extraPhones) => [...new Set([
+  customer?.phone,
+  ...(Array.isArray(customer?.phone_numbers) ? customer.phone_numbers : []),
+  ...extraPhones,
+].map((phone) => String(phone || '').trim()).filter(Boolean))];
+
+const customerPhoneLinks = (customer, ...extraPhones) => {
+  const phones = customerPhoneList(customer, ...extraPhones);
+  return phones.length
+    ? phones.map((phone) => `<a href="tel:${esc(phone)}">${esc(phone)}</a>`).join(' · ')
+    : '—';
+};
+
 function parseCustomerEmails(value) {
   const emails = [...new Set(String(value || '').split(/[\s,;]+/)
     .map((email) => email.trim().toLowerCase()).filter(Boolean))];
@@ -751,13 +764,13 @@ function renderNewOrderCustomerOptions(open = true) {
       || newOrderCustomerLabel(c).toLowerCase().includes(q)
       || (c.name || '').toLowerCase().includes(q)
       || (c.business_name || '').toLowerCase().includes(q)
-      || (c.phone || '').includes(q)
+      || customerPhoneList(c).some((phone) => phone.includes(q))
       || customerEmailList(c).some((email) => email.includes(q)))
     .sort((a, b) => (a.business_name || a.name).localeCompare(b.business_name || b.name, 'he'));
 
   const list = $('newOrderCustomerList');
   list.innerHTML = customers.length ? customers.map((c, index) => {
-    const details = [c.phone, customerEmailList(c).join(', '), c.city].filter(Boolean).join(' · ');
+    const details = [customerPhoneList(c).join(', '), customerEmailList(c).join(', '), c.city].filter(Boolean).join(' · ');
     return `<button type="button" class="customer-option ${c.id === selected ? 'selected' : ''}"
                     id="newOrderCustomerOption${index}" role="option"
                     aria-selected="${c.id === selected}" data-new-order-customer="${c.id}">
@@ -811,6 +824,11 @@ function renderNewOrderCollections() {
     </button>`;
   }).join('');
 }
+
+const parseCustomerPhones = (value) => [...new Set(String(value || '')
+  .split(/[\n,;]+/)
+  .map((phone) => phone.trim())
+  .filter(Boolean))];
 
 function searchNewOrderProducts() {
   const q = $('newOrderProductSearch').value.trim().toLowerCase();
@@ -1756,7 +1774,7 @@ function openOrder(id) {
           ${o.customer_id ? `<button class="btn ghost sm merge-order-customer-btn"
             data-merge-order-customer="${o.customer_id}">איחוד ללקוח קיים</button>` : ''}
         </div>
-        <div><span class="muted">טלפון:</span> ${(o.phone || o.customers?.phone) ? `<a href="tel:${esc(o.phone || o.customers.phone)}">${esc(o.phone || o.customers.phone)}</a>` : '—'}</div>
+        <div><span class="muted">טלפונים:</span> ${customerPhoneLinks(o.customers, o.phone)}</div>
         <div><span class="muted">מיילים:</span> ${customerEmailList(o.customers).length
           ? customerEmailList(o.customers).map((email) => `<a href="mailto:${esc(email)}">${esc(email)}</a>`).join(' · ')
           : (o.email ? `<a href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : '—')}</div>
@@ -2913,7 +2931,7 @@ function openProfitCustomerExclusions() {
   const renderList = () => {
     const query = $('profitExcludedSearch').value.trim().toLowerCase();
     const customers = db.customers
-      .filter((customer) => [customerLabel(customer), customer.name, customer.email, customer.phone]
+      .filter((customer) => [customerLabel(customer), customer.name, customer.email, ...customerPhoneList(customer)]
         .some((value) => String(value || '').toLowerCase().includes(query)))
       .sort((a, b) => customerLabel(a).localeCompare(customerLabel(b), 'he'));
 
@@ -2924,7 +2942,7 @@ function openProfitCustomerExclusions() {
               ${selected.has(String(customer.id)) ? 'checked' : ''}>
             <span class="customer-copy grow">
               <b>${esc(customerLabel(customer))}</b>
-              <span class="small muted">${esc([customer.name !== customerLabel(customer) ? customer.name : '', customer.phone || '', customer.email || ''].filter(Boolean).join(' · '))}</span>
+              <span class="small muted">${esc([customer.name !== customerLabel(customer) ? customer.name : '', customerPhoneList(customer).join(', '), customer.email || ''].filter(Boolean).join(' · '))}</span>
             </span>
           </label>`).join('')
       : '<div class="empty">לא נמצאו לקוחות</div>';
@@ -3903,7 +3921,7 @@ function renderCustomers() {
     !q || c.name.toLowerCase().includes(q)
        || (c.business_name || '').toLowerCase().includes(q)
        || (c.duplicate_candidate_name || '').toLowerCase().includes(q)
-       || (c.phone || '').includes(q))
+       || customerPhoneList(c).some((phone) => phone.includes(q)))
     .sort((a, b) => Number(b.duplicate_status === 'pending') - Number(a.duplicate_status === 'pending')
       || a.name.localeCompare(b.name, 'he'));
 
@@ -3928,7 +3946,7 @@ function renderCustomers() {
           ? '<div class="chip green" style="margin-top:.25rem">נבדק — לא כפול</div>'
           : ''}<div class="chip ${c.icount_client_id ? 'green' : 'gray'}" style="margin-top:.25rem">${c.icount_client_id
             ? `iCount #${esc(c.icount_client_id)}` : 'לא מקושר ל־iCount'}</div>`, 'bold')}
-      ${td('טלפון', c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '—', 'small nowrap')}
+      ${td('טלפון', customerPhoneLinks(c), 'small nowrap')}
       ${td('הזמנות', fmtNum(c.orders_count), 'num')}
       ${td('יחידות', fmtNum(c.total_units), 'num')}
       ${td('מחזור', c.total_amount > 0 ? fmtMoney(c.total_amount) : '—', 'num')}
@@ -4111,7 +4129,7 @@ function openCustomer(id) {
     <div class="card" style="padding:.8rem">
       <div class="grid-2 small">
         <div><span class="muted">שם העסק:</span> <b>${esc(c.business_name || c.name)}</b></div>
-        <div><span class="muted">טלפון:</span> ${c.phone ? `<a href="tel:${esc(c.phone)}">${esc(c.phone)}</a>` : '—'}</div>
+        <div><span class="muted">טלפונים:</span> ${customerPhoneLinks(c)}</div>
         <div><span class="muted">מיילים:</span> ${esc(customerEmailList(c).join(', ') || '—')}</div>
         <div><span class="muted">עיר:</span> ${esc(c.city || '—')}</div>
       </div>
@@ -4174,13 +4192,15 @@ function openCustomer(id) {
 function editCustomer(id) {
   const c = id ? db.customers.find((x) => x.id === id) : null;
   const currentEmails = customerEmailList(c);
+  const currentPhones = customerPhoneList(c);
 
   modal(c ? `עריכת ${c.business_name || c.name}` : 'לקוח חדש', `
     <div class="field"><label>שם העסק <span class="req">*</span></label>
       <input type="text" id="uBiz" autocomplete="organization" value="${esc(c?.business_name || c?.name || '')}"></div>
     <div class="grid-2">
-      <div class="field"><label>טלפון</label>
-        <input type="tel" id="uPhone" inputmode="tel" value="${esc(c?.phone || '')}"></div>
+      <div class="field"><label>טלפונים</label>
+        <textarea id="uPhone" rows="2" inputmode="tel" placeholder="050-0000000">${esc(currentPhones.join('\n'))}</textarea>
+        <div class="hint">אפשר להזין כמה מספרים, כל אחד בשורה נפרדת או מופרד בפסיק.</div></div>
       <div class="field"><label>כתובות מייל להתראות וחשבוניות</label>
         <textarea id="uEmails" rows="2" inputmode="email" placeholder="mail@example.com, office@example.com">${esc(currentEmails.join('\n'))}</textarea>
         <div class="hint">אפשר להזין כמה כתובות, כל אחת בשורה נפרדת או מופרדת בפסיק.</div></div>
@@ -4214,10 +4234,12 @@ function editCustomer(id) {
     if (!businessName) { toast('חסר שם עסק', true); return; }
     const { emails, invalid } = parseCustomerEmails($('uEmails').value);
     if (invalid.length) { toast(`כתובת מייל לא תקינה: ${invalid[0]}`, true); return; }
+    const phones = parseCustomerPhones($('uPhone').value);
     const rec = {
       name:           businessName,
       business_name:  businessName,
-      phone:         $('uPhone').value.trim() || null,
+      phone:          phones[0] || null,
+      phone_numbers:  phones,
       email:          emails[0] || null,
       email_recipients: emails,
       city:          $('uCity').value.trim()  || null,
@@ -4237,6 +4259,12 @@ function editCustomer(id) {
         ? await sb.rpc('admin_update_customer', { p_customer_id: c.id, p_data: rec })
         : await sb.from('customers').insert(rec);
       if (error) throw error;
+      if (c) {
+        const { error: phoneError } = await sb.from('customers')
+          .update({ phone_numbers: phones })
+          .eq('id', c.id);
+        if (phoneError) throw phoneError;
+      }
       const repriced = Number(data?.repriced_orders || 0);
       toast(c
         ? `הלקוח עודכן${repriced ? ` · התמחור עודכן ב-${fmtNum(repriced)} הזמנות פתוחות` : ''}`
@@ -4749,7 +4777,7 @@ function renderFlexibleInvoiceCustomers(open = true) {
     .filter((c) => c.is_active !== false)
     .filter((c) => !q
       || flexibleInvoiceCustomerLabel(c).toLowerCase().includes(q)
-      || (c.phone || '').includes(q)
+      || customerPhoneList(c).some((phone) => phone.includes(q))
       || (c.email || '').toLowerCase().includes(q)
       || (c.tax_id || '').includes(q))
     .sort((a, b) => flexibleInvoiceCustomerLabel(a).localeCompare(flexibleInvoiceCustomerLabel(b), 'he'));
@@ -4757,7 +4785,7 @@ function renderFlexibleInvoiceCustomers(open = true) {
     <button type="button" class="customer-option ${customer.id === selected ? 'selected' : ''}"
             role="option" data-flex-invoice-customer="${customer.id}">
       <span class="customer-option-title">${esc(flexibleInvoiceCustomerLabel(customer))}</span>
-      <span class="customer-option-details">${esc([customer.phone, customer.email, customer.tax_id].filter(Boolean).join(' · '))}</span>
+      <span class="customer-option-details">${esc([customerPhoneList(customer).join(', '), customer.email, customer.tax_id].filter(Boolean).join(' · '))}</span>
     </button>`).join('') : '<div class="customer-option-empty">לא נמצאו לקוחות מתאימים</div>';
   list.classList.toggle('open', open);
   search.setAttribute('aria-expanded', String(open));
@@ -5991,7 +6019,7 @@ function wire() {
   });
   on('exportCustomers', 'click', async () => {
     await exportXlsx('לקוחות', [{ name: 'לקוחות', rows: db.customers.map((c) => ({
-      'שם העסק': c.business_name || c.name, 'טלפון': c.phone || '',
+      'שם העסק': c.business_name || c.name, 'טלפון': customerPhoneList(c).join(', '),
       'מיילים': customerEmailList(c).join(', '),
       'עיר': c.city || '', 'הזמנות': c.orders_count, 'יחידות': c.total_units,
       'מחזור': Number(c.total_amount || 0),
