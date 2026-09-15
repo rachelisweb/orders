@@ -39,7 +39,7 @@ begin
     raise exception 'רשימת הדגמים כוללת כפילויות';
   end if;
 
-  update public.orders set model_order = v_models, updated_at = now()
+  update public.orders set model_order = v_models
    where id = p_order_id;
 
   if v_source.status = 'pending'
@@ -63,7 +63,7 @@ begin
          where oi.order_id = v_target.id
       ) models;
 
-      update public.orders set model_order = coalesce(v_target_models, '{}'), updated_at = now()
+      update public.orders set model_order = coalesce(v_target_models, '{}')
        where id = v_target.id;
     end loop;
   end if;
