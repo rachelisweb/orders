@@ -865,17 +865,11 @@ const normalizeImportKey = (value) => normalizeImportText(value).toLocaleLowerCa
 
 function parseOrderImportRows(rows) {
   if (!Array.isArray(rows) || !rows.length) throw new Error('קובץ האקסל ריק');
-  const headers = rows[0].map((value) => normalizeImportText(value).toUpperCase());
-  const customerCol = headers.findIndex((value) => ['שם לקוח', 'שם הלקוח'].includes(value));
-  const modelCol = headers.indexOf('דגם');
-  if (customerCol < 0 || modelCol < 0) throw new Error('חובה לכלול את העמודות „שם לקוח” ו„דגם”');
-
-  const sizeCols = new Map();
-  for (const size of IMPORT_ORDER_SIZES) {
-    const index = headers.indexOf(size);
-    if (index < 0) throw new Error(`חסרה עמודת המידה ${size}`);
-    sizeCols.set(size, index);
-  }
+  // The import format is positional so the wording of the header row is irrelevant:
+  // A = customer, B = model, C..L = XS..5XL.
+  const customerCol = 0;
+  const modelCol = 1;
+  const sizeCols = new Map(IMPORT_ORDER_SIZES.map((size, offset) => [size, offset + 2]));
 
   const grouped = new Map();
   const requested = new Map();
@@ -979,7 +973,7 @@ async function previewOrderImport(file) {
     const existingNames = new Set(db.customers.filter((c) => c.is_active !== false)
       .flatMap((c) => [c.name, c.business_name]).filter(Boolean).map(normalizeImportKey));
     modal('ייבוא הזמנות מאקסל', `
-      <div class="note small">ייבוא ${orders.length} הזמנות · ${fmtNum(totalUnits)} יחידות. לקוח עם שם זהה ישויך לכרטיס הקיים; שם חדש ייצור לקוח חדש.</div>
+      <div class="note small">ייבוא ${orders.length} הזמנות · ${fmtNum(totalUnits)} יחידות. המיפוי נקבע לפי מיקום העמודות (A לקוח, B דגם, C–L מידות XS–5XL), ללא תלות בכותרות. לקוח עם שם זהה ישויך לכרטיס הקיים; שם חדש ייצור לקוח חדש.</div>
       <div class="table-wrap"><table><thead><tr><th>לקוח</th><th>שיוך</th><th>דגמים</th><th>יחידות</th></tr></thead><tbody>
         ${orders.map((order) => `<tr>
           ${td('לקוח', esc(order.customer_name), 'bold')}
