@@ -335,6 +335,19 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
   border-radius: 7px;
   gap: .2rem;
 }
+.order-customer-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .22rem;
+}
+.btn.sm.merge-order-customer-btn {
+  min-height: 24px;
+  padding: .08rem .3rem;
+  font-size: .66rem;
+  border-radius: 6px;
+  font-weight: 650;
+}
 
 /* ── לשוניות ──────────────────────────────────────────── */
 .tabs {

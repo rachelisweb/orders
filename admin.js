@@ -1751,7 +1751,11 @@ function openOrder(id) {
 
     <div class="card" style="padding:.8rem;margin-bottom:.9rem">
       <div class="grid-2 small">
-        <div><span class="muted">שם העסק:</span> <b>${esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—')}</b></div>
+        <div class="order-customer-name"><span class="muted">שם העסק:</span>
+          <b>${esc(o.customers?.business_name || o.customers?.name || o.contact_name || '—')}</b>
+          ${o.customer_id ? `<button class="btn ghost sm merge-order-customer-btn"
+            data-merge-order-customer="${o.customer_id}">איחוד ללקוח קיים</button>` : ''}
+        </div>
         <div><span class="muted">טלפון:</span> ${(o.phone || o.customers?.phone) ? `<a href="tel:${esc(o.phone || o.customers.phone)}">${esc(o.phone || o.customers.phone)}</a>` : '—'}</div>
         <div><span class="muted">מיילים:</span> ${customerEmailList(o.customers).length
           ? customerEmailList(o.customers).map((email) => `<a href="mailto:${esc(email)}">${esc(email)}</a>`).join(' · ')
@@ -4068,6 +4072,8 @@ function mergeCustomers(sourceId = '') {
       closeModal();
       $('customerOverlay').classList.remove('active');
       await loadAll();
+      const openOrderId = $('orderOverlay').classList.contains('active') ? $('orderOverlay').dataset.orderId : null;
+      if (openOrderId && db.orders.some((order) => order.id === openOrderId)) openOrder(openOrderId);
     } catch (e2) {
       err.textContent = friendlyError(e2);
       err.classList.add('show');
@@ -6103,6 +6109,8 @@ function wire() {
     if (resendShipment) { await resendShipmentEmail(resendShipment.dataset.resendShipped); return; }
     const orderInvoice = e.target.closest('#orderPanelBody [data-dl]');
     if (orderInvoice) { await downloadInvoice(orderInvoice); return; }
+    const mergeOrderCustomer = e.target.closest('[data-merge-order-customer]');
+    if (mergeOrderCustomer) { mergeCustomers(mergeOrderCustomer.dataset.mergeOrderCustomer); return; }
 
     // ── פעולות מתוך פאנל החזרה ──
     const generateRefund = e.target.closest('[data-generate-refund]');
