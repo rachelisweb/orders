@@ -5,7 +5,7 @@
 // ============================================================
 import {
   sb, state, IS_CONFIGURED, BRAND, isCustomerPreview, setCustomerPreview,
-  $, $$, on, esc, imgTag, img, toast, showError,
+  $, $$, on, esc, imgTag, img, toast, showError, bustImageCache,
   fmtDate, fmtNum, friendlyError,
   loadProfile, canOrder, needsProfile, sortSizes, statusChip, debounce,
   ORDER_STATUS, exportXlsx,
@@ -21,6 +21,12 @@ let myInvoices = new Map();          // order_id → [invoices]
 const GUEST_LINE_LIMIT = 999;        // לא חושף לאורח את כמות המלאי המדויקת
 const guestApprovedQty = new Map();  // הכמות האחרונה שהשרת אישר לכל דגם/מידה
 const guestValidationTimers = new Map();
+let realtimeChannel = null;
+let realtimeRefreshTimer = null;
+let realtimeCatalogQueued = false;
+let realtimeOrdersQueued = false;
+let realtimeRefreshRunning = false;
+let realtimeImageVersion = null;
 
 // ההזמנות שעדיין בטיפול מול אלה שכבר יצאו. ברגע שהמנהל מסמן
 // "נשלחה" ההזמנה עוברת מ"ממתינות" ל"היסטוריה".
@@ -103,6 +109,7 @@ async function route() {
   screen('appScreen');
   nav('catalog');
   await loadCatalog();
+  setupRealtimeSync();
 }
 
 async function startGuest() {
@@ -112,6 +119,7 @@ async function startGuest() {
   state.customer = null;
   enterGuestApp();
   await loadCatalog();
+  setupRealtimeSync();
 }
 
 function enterGuestApp() {
@@ -328,9 +336,9 @@ async function saveAccountProfile() {
 // ============================================================
 // קטלוג — בלי מחירים, בלי מספרי מלאי
 // ============================================================
-async function loadCatalog() {
+async function loadCatalog(silent = false) {
   const list = $('productList');
-  list.innerHTML = '<div class="loading"><div class="spinner"></div>טוען קטלוג…</div>';
+  if (!silent) list.innerHTML = '<div class="loading"><div class="spinner"></div>טוען קטלוג…</div>';
 
   try {
     let cols, prods, available;
@@ -874,6 +882,7 @@ function closeCart() {
   $('cartOverlay').classList.remove('active');
   const active = $('catalogView').classList.contains('active') ? 'catalog' : 'orders';
   $$('.bn-item').forEach((b) => b.classList.toggle('active', b.dataset.nav === active));
+  if (realtimeCatalogQueued || realtimeOrdersQueued) scheduleCustomerRealtimeRefresh();
 }
 
 // ============================================================
@@ -886,9 +895,9 @@ function closeCart() {
 // ============================================================
 let looseInvoices = [];
 
-async function loadMyOrders() {
+async function loadMyOrders(silent = false) {
   const box = $('myOrdersList');
-  box.innerHTML = '<div class="loading"><div class="spinner"></div>טוען…</div>';
+  if (!silent) box.innerHTML = '<div class="loading"><div class="spinner"></div>טוען…</div>';
 
   try {
     const [{ data: orders, error: e1 }, { data: invoices, error: e2 }] = await Promise.all([
@@ -1013,6 +1022,7 @@ async function downloadInvoice(btn) {
 function openMyOrder(id) {
   const o = myOrders.find((x) => x.id === id);
   if (!o) return;
+  $('orderOverlay').dataset.orderId = id;
 
   const lines = (o.order_items || []).slice()
     .sort((a, b) => a.model.localeCompare(b.model, 'he') || sortSizes(a.size, b.size));
@@ -1093,6 +1103,74 @@ function openMyOrder(id) {
 }
 
 function closeMyOrder() { $('orderOverlay').classList.remove('active'); }
+
+// Live updates for the catalog and the signed-in customer's orders. The
+// catalog signal contains no inventory quantities, so availability can be
+// refreshed for guests without exposing stock data through Realtime.
+function setupRealtimeSync() {
+  if (realtimeChannel) return;
+  realtimeChannel = sb
+    .channel('customer-live-sync')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'catalog_realtime_signal' }, (payload) => {
+      const nextImageVersion = payload.new?.image_version;
+      if (realtimeImageVersion === null || nextImageVersion !== realtimeImageVersion) {
+        bustImageCache(nextImageVersion);
+      }
+      realtimeImageVersion = nextImageVersion ?? realtimeImageVersion;
+      realtimeCatalogQueued = true;
+      scheduleCustomerRealtimeRefresh();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+      realtimeOrdersQueued = true;
+      scheduleCustomerRealtimeRefresh();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
+      realtimeOrdersQueued = true;
+      scheduleCustomerRealtimeRefresh();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+      realtimeOrdersQueued = true;
+      scheduleCustomerRealtimeRefresh();
+    })
+    .subscribe((status) => {
+      if (['CHANNEL_ERROR', 'TIMED_OUT'].includes(status)) console.warn(`Realtime sync status: ${status}`);
+    });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && (realtimeCatalogQueued || realtimeOrdersQueued)) scheduleCustomerRealtimeRefresh();
+  });
+  document.addEventListener('focusout', () => {
+    if (realtimeCatalogQueued || realtimeOrdersQueued) setTimeout(scheduleCustomerRealtimeRefresh, 0);
+  });
+}
+
+function scheduleCustomerRealtimeRefresh() {
+  clearTimeout(realtimeRefreshTimer);
+  if (document.hidden) return;
+  realtimeRefreshTimer = setTimeout(runCustomerRealtimeRefresh, 400);
+}
+
+async function runCustomerRealtimeRefresh() {
+  if (realtimeRefreshRunning || document.hidden) return;
+  if ($('cartOverlay').classList.contains('active') || document.querySelector('input:focus, textarea:focus, select:focus')) return;
+  realtimeRefreshRunning = true;
+  const refreshCatalog = realtimeCatalogQueued;
+  const refreshOrders = realtimeOrdersQueued && !isGuest &&
+    ($('ordersView').classList.contains('active') || $('orderOverlay').classList.contains('active'));
+  realtimeCatalogQueued = false;
+  realtimeOrdersQueued = false;
+  const openOrderId = $('orderOverlay').classList.contains('active') ? $('orderOverlay').dataset.orderId : null;
+  try {
+    if (refreshCatalog) await loadCatalog(true);
+    if (refreshOrders) {
+      await loadMyOrders(true);
+      if (openOrderId && myOrders.some((order) => order.id === openOrderId)) openMyOrder(openOrderId);
+    }
+  } finally {
+    realtimeRefreshRunning = false;
+    if (realtimeCatalogQueued || realtimeOrdersQueued) scheduleCustomerRealtimeRefresh();
+  }
+}
 
 async function exportMyOrders() {
   if (!myOrders.length) { toast('אין הזמנות לייצוא', true); return; }

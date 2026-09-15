@@ -83,16 +83,25 @@ export function esc(s) {
 // ── תמונות ──────────────────────────────────────────────────
 // מזריק טרנספורמציות ל-URL של Cloudinary: פורמט ואיכות אוטומטיים + רוחב יעד.
 // זה ההבדל בין PNG של 800KB לבין WebP של 30KB בתצוגה של 110px.
+let imageCacheVersion = '';
+export function bustImageCache(version = Date.now()) {
+  imageCacheVersion = String(version || Date.now());
+}
+
 export function img(url, width = 400) {
   if (!url) return '';
   const marker = '/image/upload/';
   const i = url.indexOf(marker);
-  if (i === -1 || !url.includes('res.cloudinary.com')) return url;
-  const head = url.slice(0, i + marker.length);
-  const tail = url.slice(i + marker.length);
-  // אם כבר יש טרנספורמציה בנתיב, לא נוגעים
-  if (/^[a-z]_[^/]*\//.test(tail)) return url;
-  return `${head}f_auto,q_auto,c_limit,w_${width}/${tail}`;
+  let result = url;
+  if (i !== -1 && url.includes('res.cloudinary.com')) {
+    const head = url.slice(0, i + marker.length);
+    const tail = url.slice(i + marker.length);
+    // אם כבר יש טרנספורמציה בנתיב, לא נוגעים
+    if (!/^[a-z]_[^/]*\//.test(tail)) result = `${head}f_auto,q_auto,c_limit,w_${width}/${tail}`;
+  }
+  if (!imageCacheVersion) return result;
+  const separator = result.includes('?') ? '&' : '?';
+  return `${result}${separator}rv=${encodeURIComponent(imageCacheVersion)}`;
 }
 
 // תגית <img> מוכנה, עם יחס גובה-רוחב קבוע כדי למנוע קפיצות פריסה

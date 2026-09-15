@@ -4,7 +4,7 @@
 import {
   sb, state, IS_CONFIGURED, SIZES,
   $, $$, on, esc, img, imgTag, toast, showError, fmtDate, fmtMoney, fmtNum, td, todayISO,
-  friendlyError, loadProfile, sortSizes, statusChip, debounce, compressImage,
+  friendlyError, loadProfile, sortSizes, statusChip, debounce, compressImage, bustImageCache,
   makeSortable, exportXlsx, exportCsv, readXlsxRows, setCustomerPreview,
   ORDER_STATUS, STATUS_FLOW, RETURN_STATUS,
 } from './lib.js?v=20260905-2';
@@ -422,7 +422,8 @@ function setupRealtimeSync() {
   });
 }
 
-function scheduleRealtimeRefresh() {
+function scheduleRealtimeRefresh(payload) {
+  if (payload?.table === 'products') bustImageCache(payload.commit_timestamp);
   realtimeRefreshQueued = true;
   clearTimeout(realtimeRefreshTimer);
   if (document.hidden) return;
