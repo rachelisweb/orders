@@ -880,37 +880,44 @@ function parseOrderImportRows(rows) {
   const grouped = new Map();
   const requested = new Map();
   const errors = [];
+  const addError = (row, customer, model, field, message) => errors.push({ row, customer, model, field, message });
   rows.slice(1).forEach((row, offset) => {
     const rowNumber = offset + 2;
     if (!row.some((value) => normalizeImportText(value) !== '')) return;
     const customerName = normalizeImportText(row[customerCol]);
     const model = normalizeImportText(row[modelCol]);
-    if (!customerName) { errors.push(`שורה ${rowNumber}: חסר שם לקוח`); return; }
-    if (!model) { errors.push(`שורה ${rowNumber}: חסר דגם`); return; }
+    if (!customerName) { addError(rowNumber, '', model, 'שם לקוח', 'חסר שם לקוח'); return; }
+    if (!model) { addError(rowNumber, customerName, '', 'דגם', 'חסר מספר דגם'); return; }
 
     const product = db.products.find((item) => normalizeImportKey(item.model) === normalizeImportKey(model));
-    if (!product) { errors.push(`שורה ${rowNumber}: דגם ${model} לא נמצא במערכת`); return; }
+    if (!product) { addError(rowNumber, customerName, model, 'דגם', `הדגם ${model} לא נמצא במערכת`); return; }
     const items = [];
     for (const [size, index] of sizeCols) {
       const raw = row[index];
       if (raw === '' || raw == null) continue;
       const qty = Number(raw);
       if (!Number.isInteger(qty) || qty < 0) {
-        errors.push(`שורה ${rowNumber}: הכמות בדגם ${model} מידה ${size} חייבת להיות מספר שלם ולא שלילי`);
+        addError(rowNumber, customerName, model, size,
+          `הערך „${normalizeImportText(raw)}” אינו כמות תקינה; יש להזין מספר שלם ולא שלילי`);
         continue;
       }
       if (!qty) continue;
       const available = Number(orderableStock(product)[size]);
       if (!Number.isFinite(available)) {
-        errors.push(`שורה ${rowNumber}: מידה ${size} אינה מוגדרת במלאי של דגם ${model}`);
+        addError(rowNumber, customerName, model, size, `המידה ${size} אינה מוגדרת במלאי של הדגם`);
         continue;
       }
       const stockKey = `${product.id}|${size}`;
-      requested.set(stockKey, (requested.get(stockKey) || 0) + qty);
+      const stockRequest = requested.get(stockKey) || { qty: 0, rows: [] };
+      stockRequest.qty += qty;
+      stockRequest.rows.push(rowNumber);
+      requested.set(stockKey, stockRequest);
       items.push({ model: product.model, size, qty });
     }
     if (!items.length) {
-      if (!errors.some((error) => error.startsWith(`שורה ${rowNumber}:`))) errors.push(`שורה ${rowNumber}: לא הוזנו כמויות`);
+      if (!errors.some((error) => error.row === rowNumber)) {
+        addError(rowNumber, customerName, model, 'כמויות', 'לא הוזנה כמות באף מידה');
+      }
       return;
     }
     const key = normalizeImportKey(customerName);
@@ -918,16 +925,45 @@ function parseOrderImportRows(rows) {
     grouped.get(key).items.push(...items);
   });
 
-  for (const [stockKey, qty] of requested) {
+  for (const [stockKey, request] of requested) {
     const [productId, size] = stockKey.split('|');
     const product = db.products.find((item) => item.id === productId);
     const available = Number(orderableStock(product)[size] || 0);
-    if (qty > available) errors.push(`דגם ${product.model} מידה ${size}: בקובץ הוזמנו ${qty}, אך זמינות רק ${available} יחידות`);
+    if (request.qty > available) addError(request.rows.join(', '), '', product.model, size,
+      `בסך הכול הוזמנו ${request.qty} יחידות בשורות ${request.rows.join(', ')}, אך זמינות רק ${available}`);
   }
-  if (errors.length) throw new Error(errors.slice(0, 12).join('\n') + (errors.length > 12 ? `\nועוד ${errors.length - 12} שגיאות` : ''));
+  if (errors.length) {
+    const error = new Error(`נמצאו ${errors.length} שגיאות בקובץ`);
+    error.importErrors = errors;
+    throw error;
+  }
   const orders = [...grouped.values()];
   if (!orders.length) throw new Error('לא נמצאו בקובץ שורות עם כמויות');
   return orders;
+}
+
+function orderImportErrorHtml(error, fileName = '') {
+  const errors = error?.importErrors;
+  if (!Array.isArray(errors) || !errors.length) {
+    return `<div class="note danger import-error-summary">
+      <b>הייבוא לא בוצע.</b><br>${esc(friendlyError(error))}
+      ${fileName ? `<div class="small muted" style="margin-top:.35rem">קובץ: ${esc(fileName)}</div>` : ''}
+    </div>`;
+  }
+  return `<div class="note danger import-error-summary">
+      <b>הייבוא לא בוצע — נמצאו ${errors.length} שגיאות.</b><br>
+      יש לתקן את השורות הבאות בקובץ ולהעלות אותו שוב.
+      ${fileName ? `<div class="small muted" style="margin-top:.35rem">קובץ: ${esc(fileName)}</div>` : ''}
+    </div>
+    <ol class="import-error-list">
+      ${errors.map((item) => `<li>
+        <b>שורה ${esc(item.row)}</b>
+        ${item.customer ? ` · לקוח: ${esc(item.customer)}` : ''}
+        ${item.model ? ` · דגם: ${esc(item.model)}` : ''}
+        ${item.field ? ` · עמודה: ${esc(item.field)}` : ''}
+        <div>${esc(item.message)}</div>
+      </li>`).join('')}
+    </ol>`;
 }
 
 async function chooseOrderImportFile() {
@@ -969,13 +1005,14 @@ async function previewOrderImport(file) {
         await loadAll();
         if (activeTab !== 'orders') switchTab('orders'); else renderOrders();
       } catch (error) {
-        showError('ordersImportError', friendlyError(error));
+        $('ordersImportError').innerHTML = orderImportErrorHtml(error, file.name);
+        $('ordersImportError').classList.add('show');
         button.disabled = false;
         button.textContent = `יצירת ${orders.length} הזמנות`;
       }
     };
   } catch (error) {
-    modal('לא ניתן לייבא את הקובץ', `<div class="err-msg" style="display:block;white-space:pre-line">${esc(friendlyError(error))}</div>`);
+    modal('שגיאות בקובץ האקסל', orderImportErrorHtml(error, file.name), true);
   }
 }
 
