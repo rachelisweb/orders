@@ -33,6 +33,11 @@ let newOrderSubmitting = false;
 let flexibleInvoiceRequestId = null;
 let flexibleInvoicePreviewPayload = null;
 let loadAllRequestId = 0;
+let realtimeChannel = null;
+let realtimeRefreshTimer = null;
+let realtimeRefreshRunning = false;
+let realtimeRefreshQueued = false;
+let realtimePanelOrderId = null;
 const futureOrderMutations = new Set();
 const readyQuantityEditOrders = new Set();
 const LOCAL_REVIEW = new URLSearchParams(location.search).get('review') === '1';
@@ -74,6 +79,7 @@ async function init() {
 
   wire();
   await loadAll();
+  setupRealtimeSync();
 }
 
 function loadReviewFixtures() {
@@ -389,6 +395,68 @@ function groupActionOrdersByCustomer(orders) {
     groups.get(key).orders.push(order);
   }
   return [...groups.values()];
+}
+
+// Keep every open admin device in sync. Database actions often update several
+// rows at once, so events are coalesced into one refresh instead of reloading
+// the whole dashboard for every changed row.
+function setupRealtimeSync() {
+  if (MOCK_REVIEW || realtimeChannel) return;
+
+  realtimeChannel = sb
+    .channel('admin-live-sync')
+    .on('postgres_changes', { event: '*', schema: 'public' }, scheduleRealtimeRefresh)
+    .subscribe((status) => {
+      if (['CHANNEL_ERROR', 'TIMED_OUT'].includes(status)) {
+        console.warn(`Realtime sync status: ${status}`);
+      }
+    });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && realtimeRefreshQueued) scheduleRealtimeRefresh();
+  });
+
+  document.addEventListener('focusout', (event) => {
+    if (!realtimePanelOrderId || !event.target.closest('#orderOverlay')) return;
+    setTimeout(refreshDeferredOrderPanel, 0);
+  });
+}
+
+function scheduleRealtimeRefresh() {
+  realtimeRefreshQueued = true;
+  clearTimeout(realtimeRefreshTimer);
+  if (document.hidden) return;
+  realtimeRefreshTimer = setTimeout(runRealtimeRefresh, 400);
+}
+
+async function runRealtimeRefresh() {
+  if (realtimeRefreshRunning || document.hidden) return;
+  realtimeRefreshRunning = true;
+  realtimeRefreshQueued = false;
+
+  const overlay = $('orderOverlay');
+  const orderId = overlay?.classList.contains('active') ? overlay.dataset.orderId : null;
+  const editorFocused = !!overlay?.querySelector('input:focus, textarea:focus, select:focus, [contenteditable="true"]:focus');
+
+  try {
+    await loadAll();
+    if (orderId && db.orders.some((order) => order.id === orderId)) {
+      if (editorFocused) realtimePanelOrderId = orderId;
+      else openOrder(orderId);
+    }
+  } finally {
+    realtimeRefreshRunning = false;
+    if (realtimeRefreshQueued) scheduleRealtimeRefresh();
+  }
+}
+
+function refreshDeferredOrderPanel() {
+  const overlay = $('orderOverlay');
+  if (!realtimePanelOrderId || !overlay?.classList.contains('active')) return;
+  if (overlay.querySelector('input:focus, textarea:focus, select:focus, [contenteditable="true"]:focus')) return;
+  const orderId = realtimePanelOrderId;
+  realtimePanelOrderId = null;
+  if (db.orders.some((order) => order.id === orderId)) openOrder(orderId);
 }
 
 // כרטיס "דורש טיפול" — משימות פתוחות בלבד, בראש הדשבורד.
@@ -1647,6 +1715,8 @@ function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels
 function openOrder(id) {
   const o = db.orders.find((x) => x.id === id);
   if (!o) return;
+  $('orderOverlay').dataset.orderId = id;
+  realtimePanelOrderId = null;
 
   const lines = (o.order_items || []).slice()
     .sort((a, b) => a.model.localeCompare(b.model, 'he') || sortSizes(a.size, b.size));
