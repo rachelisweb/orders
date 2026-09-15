@@ -1847,7 +1847,6 @@ function openOrder(id) {
         title="פצל את הדגמים המסומנים להזמנה נפרדת">✂️ פיצול</button>` : ''}
       ${canArchive(o) ? `<button class="btn ghost sm" data-archive-panel="${o.id}">🗄️ לארכיון</button>` : ''}
       ${isArchived(o) ? `<button class="btn ghost sm" data-unarchive-panel="${o.id}">↩️ מהארכיון</button>` : ''}
-      <button class="btn ghost sm" data-export-order="${o.id}">⬇️ ייצוא</button>
       <span class="grow"></span>
       ${o.status === 'cancelled'
         ? `<button class="btn ghost sm" data-restore-panel="${o.id}">↩️ שחזור</button>
