@@ -221,6 +221,8 @@ a { color: var(--accent-ink); }
 .import-error-list li div { margin-top: .2rem; color: var(--danger); }
 .act-customer-card .act-row { margin-bottom: .35rem; }
 .act-customer-card .act-row:last-child { margin-bottom: 0; }
+.order-customer-groups { display: grid; gap: .65rem; }
+.order-customer-card { margin-bottom: 0; }
 
 .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .muted { color: var(--muted); }

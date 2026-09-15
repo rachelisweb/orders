@@ -1199,7 +1199,8 @@ function renderOrders() {
   const archiveView   = orderStatusTab === 'archive';
   const cancelledView = orderStatusTab === 'cancelled';
   const pendingView   = orderStatusTab === 'pending';
-  const sortableView  = pendingView || futureView;
+  const groupedView   = !archiveView && !cancelledView;
+  const sortableView  = false;
   const archivable    = orders.filter(canArchive);
 
   if (archiveView && archiveSearch) {
@@ -1248,6 +1249,33 @@ function renderOrders() {
     return parts.length ? `<span class="row" style="gap:.3rem">${parts.join(' ')}</span>` : '';
   };
 
+  const groupedOrdersHtml = () => groupActionOrdersByCustomer(visibleOrders).map((customer) => {
+    const canMerge = customer.orders.length > 1
+      && ['pending', 'ready'].includes(orderStatusTab)
+      && customer.orders.every((order) => !hasInvoice(order.id) && !order.future_order_at);
+    return `<div class="act-customer-card order-customer-card">
+      <div class="act-customer-title">
+        <span>${esc(customer.name)}</span>
+        ${customer.orders.length > 1 ? `<span class="row act-customer-tools">
+          <span class="chip gray">${customer.orders.length} הזמנות</span>
+          ${canMerge ? `<button class="btn ghost sm" data-merge-orders="${customer.orders.map((o) => o.id).join(',')}">🔗 מיזוג הזמנות</button>` : ''}
+        </span>` : ''}
+      </div>
+      ${customer.orders.map((o) => {
+        const next = ORDER_STATUS[o.status].next;
+        const nInv = db.invoices.filter((invoice) => invoice.order_id === o.id).length;
+        const note = db.orderNotes[o.id];
+        return `<div class="act-row" data-order="${o.id}">
+          <div class="grow">
+            <div class="bold">#${o.order_number}${note ? ' <span title="יש הערת מנהל">📝</span>' : ''} ${splitOrderChip(o)}</div>
+            <div class="small muted">${fmtNum(o.total_units)} יח׳ · ${fmtDate(o.created_at, false)}${o.total_amount > 0 ? ' · ' + fmtMoney(o.total_amount) : ''}</div>
+          </div>
+          ${rowActions(o, next, nInv)}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+
   $('ordersTable').innerHTML = `
     ${futureView ? futureFolderSettings(orders.length) : ''}
     ${archiveView ? `<div class="archive-tools">
@@ -1262,7 +1290,9 @@ function renderOrders() {
        <button class="btn ghost sm" id="archiveBucket">🗄️ העבר את כל ${fmtNum(archivable.length)} ההזמנות בלשונית לארכיון</button>
      </div>` : ''}
     ${!orders.length ? `<div class="empty"><div class="ico">${meta.icon}</div>
-       ${archiveSearch ? 'לא נמצאו הזמנות התואמות לחיפוש' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : `<div class="table-wrap"><table class="responsive${sortableView ? ' order-sort-table' : ''}"><thead><tr>
+       ${archiveSearch ? 'לא נמצאו הזמנות התואמות לחיפוש' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : groupedView
+      ? `<div class="order-customer-groups">${groupedOrdersHtml()}</div>`
+      : `<div class="table-wrap"><table class="responsive${sortableView ? ' order-sort-table' : ''}"><thead><tr>
       <th>#</th><th>לקוח</th><th>תאריך</th><th class="num">יח׳</th>
       <th class="num">סכום</th>${archiveView ? '<th>סטטוס</th>' : ''}<th class="num">🧾</th><th></th>
     </tr></thead><tbody${sortableView ? ' id="ordersRows"' : ''}>
@@ -1318,6 +1348,12 @@ function renderOrders() {
   }
 
   $('ordersTable').onclick = async (e) => {
+    const merge = e.target.closest('[data-merge-orders]');
+    if (merge) {
+      e.stopPropagation();
+      await mergeActionOrders(merge.dataset.mergeOrders.split(',').filter(Boolean), merge);
+      return;
+    }
     const future = e.target.closest('[data-future-order]');
     if (future) {
       e.stopPropagation();
