@@ -1813,7 +1813,21 @@ async function saveOrderModelOrder(order, models) {
       });
       if (error) throw error;
     }
-    toast('סדר הדגמים נשמר');
+    if (order.status === 'pending' && !order.future_order_at && !isArchived(order)) {
+      const positions = new Map(models.map((model, index) => [model, index]));
+      db.orders.filter((item) => item.id !== order.id && item.status === 'pending'
+        && !item.future_order_at && !isArchived(item)).forEach((item) => {
+        const existing = [...new Set((item.order_items || []).map((line) => line.model))];
+        const previousPositions = new Map((item.model_order || []).map((model, index) => [model, index]));
+        item.model_order = existing.sort((a, b) =>
+          (positions.get(a) ?? Number.MAX_SAFE_INTEGER) - (positions.get(b) ?? Number.MAX_SAFE_INTEGER)
+          || (previousPositions.get(a) ?? Number.MAX_SAFE_INTEGER) - (previousPositions.get(b) ?? Number.MAX_SAFE_INTEGER)
+          || a.localeCompare(b, 'he'));
+      });
+      toast('סדר הדגמים נשמר בכל ההזמנות הממתינות');
+    } else {
+      toast('סדר הדגמים נשמר');
+    }
   } catch (err) {
     order.model_order = previous;
     toast(friendlyError(err), true);
