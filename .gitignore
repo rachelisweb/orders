@@ -1,58 +1,33 @@
-# סביבת הפיתוח כוללת מיגרציות, פונקציות וקובצי מעבר עם נתונים פנימיים.
-# ל-GitHub Pages עולים רק קובצי האתר הסטטיים שבשורש המאגר.
-/.codex-tmp/
+# Dependencies and generated files
+node_modules/
+coverage/
+dist/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+service-account*.json
+
+# Legacy workspace may contain imports with customer data. Its maintained
+# source files have moved to /supabase and the entire old tree stays private.
 /v2/
+/.claude/
+/.codex/
 
-# רק הקוד החדש של iCount נשמר בגרסאות. יתר סביבת v2 כוללת קובצי
-# ייבוא עם שמות, טלפונים, מיילים והיסטוריית הזמנות אמיתית.
-!/v2/
-/v2/*
-!/v2/supabase/
-/v2/supabase/*
-!/v2/supabase/functions/
-/v2/supabase/functions/*
-!/v2/supabase/functions/icount-invoice/
-!/v2/supabase/functions/icount-invoice/**
-!/v2/supabase/functions/order-email/
-!/v2/supabase/functions/order-email/**
-!/v2/supabase/functions/cloudinary-upload/
-!/v2/supabase/functions/cloudinary-upload/**
-!/v2/supabase/migrations/
-/v2/supabase/migrations/*
-!/v2/supabase/migrations/20260806120000_order_archive_customer_pricing_icount.sql
-!/v2/supabase/migrations/20260806193000_remove_payment_status.sql
-!/v2/supabase/migrations/20260807090000_flexible_icount_invoices.sql
-!/v2/supabase/migrations/20260808090000_pending_zero_items_and_add_models.sql
-!/v2/supabase/migrations/20260808130000_order_checks_pricing_and_reservations.sql
-!/v2/supabase/migrations/20260808131000_future_collection_reservation_exemption.sql
-!/v2/supabase/migrations/20260808132000_reprice_orders_waiting_for_invoice.sql
-!/v2/supabase/migrations/20260808133000_reprice_pending_and_ready_orders.sql
-!/v2/supabase/migrations/20260808134000_keep_broad_open_order_repricing.sql
-!/v2/supabase/migrations/20260809100000_sync_customer_details_to_orders.sql
-!/v2/supabase/migrations/20260809101000_customer_contact_sync_trigger.sql
-!/v2/supabase/migrations/20260809110000_business_names_and_customer_emails.sql
-!/v2/supabase/migrations/20260814150000_guest_orders.sql
-!/v2/supabase/migrations/20260814173000_hide_inventory_from_guests.sql
-!/v2/supabase/migrations/20260814180000_allow_guest_order_source.sql
-!/v2/supabase/migrations/20260816180000_validate_guest_cart.sql
-!/v2/supabase/migrations/20260818120000_import_future_orders_rpc.sql
-!/v2/supabase/migrations/20260818121000_fix_import_future_orders_totals.sql
-!/v2/supabase/migrations/20260818122000_drop_future_order_import_rpc.sql
-!/v2/supabase/migrations/20260818130000_delete_duplicate_archived_winter_orders.sql
-!/v2/supabase/migrations/20260818140000_demand_customer_order.sql
-!/v2/supabase/migrations/20260818150000_demand_model_checks.sql
-!/v2/supabase/migrations/20260818160000_split_checked_order.sql
-!/v2/supabase/migrations/20260818190000_order_model_order.sql
-!/v2/supabase/migrations/20260818220000_order_bucket_order.sql
-!/v2/supabase/migrations/20260818223000_fix_order_bucket_order.sql
-!/v2/supabase/migrations/20260819090000_custom_order_prices_and_icount_refunds.sql
-!/v2/supabase/migrations/20260819110000_ready_order_add_items.sql
-!/v2/supabase/migrations/20260819170000_icount_customer_links.sql
-!/v2/supabase/migrations/20260819190000_stable_future_order_override.sql
+# Supabase CLI machine-specific state
+supabase/.temp/
 
-# Supabase CLI link metadata is local machine state.
-/supabase/.temp/
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
 
-# סודות מקומיים לעולם אינם נכנסים למאגר, גם בתוך תיקיות שהוחרגו לעיל.
-**/.env
-**/.env.*
+# Logs and temporary files
+*.log
+*.tmp
+tmp/

@@ -731,8 +731,10 @@ Deno.serve(async (req) => {
       .select('*, order_items(id, product_id, model, size, qty, unit_price), customers(id, name, business_name, email, phone, city, address, tax_id, icount_client_id, icount_client_name)')
       .eq('id', orderId).single();
     if (orderError || !order) throw orderError || new Error('ההזמנה לא נמצאה');
-    if (order.status !== 'ready') return jsonResponse({ ok: false, error: 'ניתן להפיק חשבונית רק להזמנה שמוכנה לאיסוף' }, 409);
-    if (order.archived_at) return jsonResponse({ ok: false, error: 'לא ניתן להפיק חשבונית להזמנה שכבר בארכיון' }, 409);
+    const archivedFulfilledOrder = !!order.archived_at && ['ready', 'shipped'].includes(order.status);
+    if (order.status !== 'ready' && !archivedFulfilledOrder) {
+      return jsonResponse({ ok: false, error: 'ניתן להפיק חשבונית להזמנה מוכנה, או להזמנה שסופקה ונמצאת בארכיון' }, 409);
+    }
 
     const { data: existingInvoice } = await service.from('invoices').select('id, invoice_number, file_path')
       .eq('order_id', orderId).neq('status', 'cancelled').limit(1).maybeSingle();

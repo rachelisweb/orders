@@ -257,3 +257,24 @@ export function shippedEmail(order: Order, brand: Brand, who: string, hasInvoice
       : box('#f8fafc', LINE, '#334155', 'החשבונית תישלח בנפרד ותופיע גם באזור האישי.')}
   `, brand);
 }
+
+/** ללקוח לאחר הפקת חשבונית נפרדת — פרטי ההזמנה וה-PDF המצורף. */
+export function invoiceEmail(order: Order, brand: Brand, who: string, invoiceNumber?: string | null) {
+  const items = order.order_items || [];
+  const supplied = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  const disc = Number(order.discount_amount || 0);
+
+  return shell('החשבונית להזמנתך הופקה', '#047857', `
+    <p style="margin:0 0 4px;font-size:17px;font-weight:bold;">שלום ${esc(who)},</p>
+    <p style="margin:0 0 14px;">החשבונית עבור הזמנה #${esc(order.order_number)} הופקה ומצורפת למייל זה.</p>
+    ${box('#ecfdf5', '#6ee7b7', '#065f46',
+      `<span style="font-size:16px;font-weight:bold;">הזמנה #${esc(order.order_number)}</span><br>
+       ${invoiceNumber ? `חשבונית #${esc(invoiceNumber)} · ` : ''}${supplied} יחידות · לתשלום ${money(order.total_amount)}`)}
+    <p style="margin:16px 0 0;font-weight:bold;">פרטי ההזמנה</p>
+    ${itemsTable(items, { showOrdered: true })}
+    ${disc > 0 ? box('#f8fafc', LINE, '#334155',
+      `לפני הנחה: ${money(order.subtotal_amount)}<br>הנחה: <b>−${money(disc)}</b><br>
+       לתשלום לפני מע״מ: <b>${money(order.total_amount)}</b>`) : ''}
+    ${box('#ecfdf5', '#6ee7b7', '#065f46', '🧾 <b>החשבונית מצורפת למייל הזה.</b>')}
+  `, brand);
+}

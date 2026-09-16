@@ -3,6 +3,7 @@
 //
 //   event=created  → אישור ללקוח + התראה לכתובות שב-notification_emails
 //   event=shipped  → הודעת משלוח ללקוח, עם החשבונית מצורפת אם קיימת
+//   event=invoice  → הודעה ללקוח לאחר הפקה, עם פרטי ההזמנה והחשבונית מצורפת
 //   event=test     → מייל בדיקה לכתובת שנשלחה, בלי לגעת בהזמנות
 //
 // השליחה היא SMTP ישיר עם סיסמת אפליקציה (Gmail App Password),
@@ -27,7 +28,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 import nodemailer from 'npm:nodemailer@6.9.16';
 import {
   shell, box, itemsTable,
-  customerCreatedEmail, teamCreatedEmail, shippedEmail,
+  customerCreatedEmail, teamCreatedEmail, shippedEmail, invoiceEmail,
   esc, fmtDate,
   type Brand,
 } from './template.ts';
@@ -141,8 +142,8 @@ Deno.serve(async (req) => {
 
   try {
     const { order_id, event, to, notification_token } = await req.json();
-    if (!['created', 'shipped', 'test'].includes(event)) {
-      return json({ ok: false, error: 'event חייב להיות created / shipped / test' }, 400);
+    if (!['created', 'shipped', 'invoice', 'test'].includes(event)) {
+      return json({ ok: false, error: 'event חייב להיות created / shipped / invoice / test' }, 400);
     }
 
     const sb = createClient(
@@ -224,8 +225,8 @@ Deno.serve(async (req) => {
       .from('profiles').select('role').eq('id', user.id).maybeSingle() : { data: null };
     const callerIsAdmin = callerProfile?.role === 'admin';
 
-    if (event === 'shipped' && !callerIsAdmin) {
-      return json({ ok: false, error: 'הודעת משלוח מותרת למנהל בלבד' }, 403);
+    if (['shipped', 'invoice'].includes(event) && !callerIsAdmin) {
+      return json({ ok: false, error: 'שליחת הודעה זו מותרת למנהל בלבד' }, 403);
     }
     if (event === 'created' && !guestMayNotify && !callerIsAdmin && order.user_id !== user?.id) {
       return json({ ok: false, error: 'אין הרשאה לשלוח מייל עבור הזמנה זו' }, 403);
@@ -312,6 +313,35 @@ Deno.serve(async (req) => {
       );
       sent.push(...customerEmails);
       if (attachments.length) warnings.push(`צורפו ${attachments.length} חשבוניות`);
+    }
+
+    // ── חשבונית הופקה בנפרד ──
+    if (event === 'invoice') {
+      if (!customerEmails.length) return json({ ok: true, sent: [], warnings: ['ללקוח אין כתובת מייל'] });
+
+      const { data: invoice } = await sb.from('invoices').select('*')
+        .eq('order_id', order_id).neq('status', 'cancelled')
+        .order('issued_at', { ascending: false }).limit(1).maybeSingle();
+      if (!invoice) return json({ ok: false, error: 'לא נמצאה חשבונית פעילה להזמנה' }, 409);
+
+      const { data: file, error: downloadError } = await sb.storage.from('invoices').download(invoice.file_path);
+      if (downloadError) throw downloadError;
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode(...buf.subarray(i, i + 8192));
+      const attachment = {
+        filename: invoice.file_name || `חשבונית-${invoice.invoice_number || order.order_number}.pdf`,
+        content: btoa(bin),
+      };
+
+      await sendMail(
+        customerEmails,
+        `🧾 חשבונית להזמנה #${order.order_number} — ${brand.name}`,
+        invoiceEmail(order, brand, who, invoice.invoice_number),
+        [attachment],
+      );
+      sent.push(...customerEmails);
+      warnings.push('החשבונית צורפה למייל');
     }
 
     return json({ ok: true, sent, warnings });

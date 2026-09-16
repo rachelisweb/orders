@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   groupByModel, itemsTable, esc, money,
-  customerCreatedEmail, teamCreatedEmail, shippedEmail,
+  customerCreatedEmail, teamCreatedEmail, shippedEmail, invoiceEmail,
   type Brand, type Order, type Item,
 } from './template.ts';
 
@@ -169,11 +169,20 @@ test('בלי הנחה אין בלוק הנחה', () => {
   assert.ok(!shippedEmail(plain, brand, 'פרקטי', true).includes('לפני הנחה'));
 });
 
+test('מייל חשבונית כולל פרטי הזמנה ומציין שהמסמך מצורף', () => {
+  const html = invoiceEmail(order, brand, 'פרקטי', '4216');
+  assert.ok(html.includes('החשבונית להזמנתך הופקה'));
+  assert.ok(html.includes('הזמנה #118'));
+  assert.ok(html.includes('חשבונית #4216'));
+  assert.ok(html.includes('החשבונית מצורפת'));
+});
+
 // ── תקינות HTML למייל ───────────────────────────────────────
 const allEmails = () => [
   ['לקוח — התקבלה', customerCreatedEmail(order, brand, 'פרקטי')],
   ['מנהל — חדשה',   teamCreatedEmail(order, brand, 'פרקטי', 'a@b.com')],
   ['לקוח — נשלחה',  shippedEmail(order, brand, 'פרקטי', true)],
+  ['לקוח — חשבונית', invoiceEmail(order, brand, 'פרקטי', '4216')],
 ] as const;
 
 test('כל מייל הוא RTL בעברית עם doctype', () => {

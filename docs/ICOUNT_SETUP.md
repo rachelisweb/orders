@@ -10,7 +10,7 @@
 
 ## שמירת המפתח
 
-מתוך התיקייה `frontend/v2`:
+מתוך תיקיית הפרויקט `frontend`:
 
 ```powershell
 supabase secrets set ICOUNT_API_TOKEN="הדבק-כאן-את-הטוקן"
