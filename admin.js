@@ -1310,9 +1310,12 @@ function renderOrders() {
               <button class="btn danger sm" data-del-order="${o.id}">🗑️ מחיקה</button>`;
     }
     if (archiveView) {
-      return `${invoiceButton(o.id)}
+      return `${!nInv && ['ready', 'shipped'].includes(o.status)
+                ? `<button class="btn sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>` : ''}
+              ${invoiceButton(o.id)}
               ${o.status === 'shipped' ? `<button class="btn ghost sm" data-resend-shipped="${o.id}">✉️ שליחה מחדש</button>` : ''}
-              <button class="btn ghost sm" data-unarchive="${o.id}">↩️ מהארכיון</button>`;
+              <button class="btn ghost sm" data-unarchive="${o.id}"
+                title="הוצאה מהארכיון" aria-label="הוצאה מהארכיון">↩️</button>`;
     }
     if (futureView) {
       return `<button class="btn ghost sm" data-future-order="${o.id}|false">↩️ החזרה לממתינות</button>`;
@@ -1799,7 +1802,7 @@ function openOrder(id) {
     </div>
 
     <div class="order-invoice-actions row">
-      ${o.status === 'ready' && !invs.length
+      ${!invs.length && (o.status === 'ready' || (isArchived(o) && o.status === 'shipped'))
         ? `<button class="btn sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>` : ''}
       ${invoiceButton(o.id)}
     </div>
@@ -4422,7 +4425,10 @@ function buildInvoicePreview(order) {
 async function openIcountInvoicePreview(orderId) {
   const order = db.orders.find((o) => o.id === orderId);
   if (!order) return;
-  if (order.status !== 'ready') { toast('ניתן להפיק מסמך רק להזמנה שמוכנה לאיסוף', true); return; }
+  const archivedFulfilledOrder = isArchived(order) && ['ready', 'shipped'].includes(order.status);
+  if (order.status !== 'ready' && !archivedFulfilledOrder) {
+    toast('ניתן להפיק מסמך להזמנה מוכנה, או להזמנה שסופקה ונמצאת בארכיון', true); return;
+  }
   if (latestInvoice(order.id)) { toast('כבר קיים מסמך להזמנה — ניתן להוריד אותו', true); return; }
 
   const customer = db.customers.find((c) => c.id === order.customer_id);
@@ -4518,7 +4524,7 @@ async function openIcountInvoicePreview(orderId) {
         <span>מע״מ 18%</span><b>${fmtMoney(p.vat)}</b>
         <span class="invoice-grand">סה״כ כולל מע״מ</span><b class="invoice-grand">${fmtMoney(p.total)}</b>
       </div>
-      <div class="note small">iCount לא ישלח מייל. המסמך יישמר בהזמנה ויצורף אוטומטית למייל כאשר ההזמנה תסומן כנשלחה.</div>
+      <div class="note small">iCount לא ישלח מייל בעצמו. לאחר שמירת המסמך במערכת, הוא יישלח אוטומטית לכתובות המייל המעודכנות בכרטיס הלקוח. אם אין כתובת מייל, המסמך יישמר בהזמנה ללא שליחה.</div>
       ${LOCAL_REVIEW ? '<div class="note small">🧪 מצב בדיקה מקומית: ההפקה חסומה ולא תישלח בקשה ל־iCount.</div>' : ''}
       <label class="setting-check invoice-confirm">
         <input type="checkbox" id="icountConfirm" ${blockers.length || LOCAL_REVIEW ? 'disabled' : ''}>
@@ -4632,7 +4638,16 @@ async function openIcountInvoicePreview(orderId) {
       });
       if (error) throw error;
       if (!data?.ok) throw new Error(data?.error || 'הפקת המסמך נכשלה');
-      toast(`${data.document_title || icountDocLabel(doctype)} ${data.invoice_number || ''} הופקה ונשמרה בהזמנה`);
+      let emailMessage = '';
+      try {
+        const mail = await notifyOrder(order.id, 'invoice');
+        if (mail?.error) throw new Error(mail.error);
+        emailMessage = mail?.sent?.length ? ' · החשבונית נשלחה במייל' : ' · לא נמצאה כתובת מייל לשליחה';
+      } catch (mailError) {
+        console.warn('invoice email failed', mailError);
+        emailMessage = ' · שמירת החשבונית הצליחה, אך שליחת המייל נכשלה';
+      }
+      toast(`${data.document_title || icountDocLabel(doctype)} ${data.invoice_number || ''} הופקה ונשמרה בהזמנה${emailMessage}`);
       closeModal();
       await loadAll();
       openOrder(order.id);
