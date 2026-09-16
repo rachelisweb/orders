@@ -22,6 +22,7 @@ let activeTab = 'dash';
 let orderStatusTab = 'pending';
 let archiveSearch = '';
 const archiveFilters = { customer: '', invoice: '', from: '', to: '' };
+let archiveFiltersOpen = false;
 let archiveVisible = 10;
 let returnStatusTab = 'pending';
 let stockSortMode = false;
@@ -1263,6 +1264,7 @@ function renderOrders() {
     archiveFilters.invoice = '';
     archiveFilters.from = '';
     archiveFilters.to = '';
+    archiveFiltersOpen = false;
     archiveVisible = 10;
     renderOrders();
   };
@@ -1320,6 +1322,7 @@ function renderOrders() {
   }
   orders = keepSplitOrdersTogether(orders);
   const archiveTotal = orders.length;
+  const activeArchiveFilterCount = Object.values(archiveFilters).filter(Boolean).length;
   const visibleOrders = archiveView ? orders.slice(0, archiveVisible) : orders.slice(0, 400);
 
   const rowActions = (o, next, nInv) => {
@@ -1390,16 +1393,28 @@ function renderOrders() {
     ${archiveView ? `<div class="archive-tools">
        <input type="search" id="archiveSearch" value="${esc(archiveSearch)}"
          placeholder="🔍 חיפוש לפי מספר הזמנה, שם לקוח או תאריך" aria-label="חיפוש בארכיון">
-       <select id="archiveCustomer" aria-label="סינון לפי לקוח">
-         <option value="">כל הלקוחות</option>
-         ${archiveCustomers.map((customer) => `<option value="${esc(customer.key)}" ${archiveFilters.customer === customer.key ? 'selected' : ''}>${esc(customer.name)}</option>`).join('')}
-       </select>
-       <select id="archiveInvoice" aria-label="סינון לפי חשבונית">
-         <option value="" ${!archiveFilters.invoice ? 'selected' : ''}>כל החשבוניות</option>
-         <option value="missing" ${archiveFilters.invoice === 'missing' ? 'selected' : ''}>ללא חשבונית</option>
-       </select>
-       <label class="archive-date-filter"><span>מתאריך</span><input type="date" id="archiveFrom" value="${esc(archiveFilters.from)}"></label>
-       <label class="archive-date-filter"><span>עד תאריך</span><input type="date" id="archiveTo" value="${esc(archiveFilters.to)}"></label>
+       <details class="archive-filter-menu" id="archiveFilterMenu" ${archiveFiltersOpen ? 'open' : ''}>
+         <summary class="btn ghost" aria-label="פתיחת מסנני הארכיון" title="מסננים">
+           <svg class="filter-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v5.2l-4 2V13L3 5z"/></svg>
+           ${activeArchiveFilterCount ? `<span class="filter-count">${activeArchiveFilterCount}</span>` : ''}
+         </summary>
+         <div class="archive-filter-popover">
+           <div class="bold">סינון הארכיון</div>
+           <label><span>לקוח</span><select id="archiveCustomer">
+             <option value="">כל הלקוחות</option>
+             ${archiveCustomers.map((customer) => `<option value="${esc(customer.key)}" ${archiveFilters.customer === customer.key ? 'selected' : ''}>${esc(customer.name)}</option>`).join('')}
+           </select></label>
+           <label><span>חשבונית</span><select id="archiveInvoice">
+             <option value="" ${!archiveFilters.invoice ? 'selected' : ''}>כל החשבוניות</option>
+             <option value="missing" ${archiveFilters.invoice === 'missing' ? 'selected' : ''}>ללא חשבונית</option>
+           </select></label>
+           <div class="archive-filter-dates">
+             <label><span>מתאריך</span><input type="date" id="archiveFrom" value="${esc(archiveFilters.from)}"></label>
+             <label><span>עד תאריך</span><input type="date" id="archiveTo" value="${esc(archiveFilters.to)}"></label>
+           </div>
+           ${activeArchiveFilterCount ? '<button type="button" class="btn ghost sm" id="archiveFiltersClear">ניקוי מסננים</button>' : ''}
+         </div>
+       </details>
      </div>` : ''}
     ${cancelledView ? `<div class="note small">
        <b>שחזור</b> מחזיר את ההזמנה למצב "ממתינה". <b>מחיקה</b> היא לצמיתות —
@@ -1458,6 +1473,17 @@ function renderOrders() {
   on('archiveInvoice', 'change', applyArchiveFilters);
   on('archiveFrom', 'change', applyArchiveFilters);
   on('archiveTo', 'change', applyArchiveFilters);
+  $('archiveFilterMenu')?.addEventListener('toggle', (event) => {
+    archiveFiltersOpen = event.currentTarget.open;
+  });
+  on('archiveFiltersClear', 'click', () => {
+    archiveFilters.customer = '';
+    archiveFilters.invoice = '';
+    archiveFilters.from = '';
+    archiveFilters.to = '';
+    archiveVisible = 10;
+    renderOrders();
+  });
   on('archiveMore', 'click', () => { archiveVisible += 10; renderOrders(); });
 
   on('archiveBucket', 'click', async () => {
