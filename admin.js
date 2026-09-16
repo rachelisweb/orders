@@ -741,9 +741,14 @@ const customerPhoneLinks = (customer, ...extraPhones) => {
     : '—';
 };
 
+const stripEmailDirectionControls = (value) => String(value || '')
+  .normalize('NFKC')
+  .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
+  .trim();
+
 function parseCustomerEmails(value) {
   const emails = [...new Set(String(value || '').split(/[\s,;]+/)
-    .map((email) => email.trim().toLowerCase()).filter(Boolean))];
+    .map((email) => stripEmailDirectionControls(email).toLowerCase()).filter(Boolean))];
   const invalid = emails.filter((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
   return { emails, invalid };
 }

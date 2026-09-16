@@ -121,8 +121,11 @@ function htmlToText(html: string) {
 
 function cleanEmail(value: unknown) {
   if (typeof value !== 'string') return null;
-  const email = value.trim();
-  return email || null;
+  const email = value.normalize('NFKC')
+    .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
+    .trim()
+    .toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 
 function cleanEmails(values: unknown) {
@@ -130,7 +133,7 @@ function cleanEmails(values: unknown) {
   return [...new Set(list
     .map(cleanEmail)
     .filter((email): email is string => !!email)
-    .map((email) => email.toLowerCase()))];
+  )];
 }
 
 // ============================================================
