@@ -1261,8 +1261,9 @@ tr.short td, tr.short { background: #fffbeb; }
 .inline-payable input { width: 120px; min-height: 38px; padding: .35rem .55rem; font-weight: 800; }
 .order-invoice-actions { margin: -.1rem 0 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 
-.archive-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .8fr); gap: .6rem; margin-bottom: .8rem; }
-.archive-tools .note { margin: 0; }
+.archive-tools { display: grid; grid-template-columns: minmax(260px, 1.4fr) minmax(170px, .8fr) minmax(150px, .65fr) auto auto; gap: .6rem; margin-bottom: .8rem; align-items:end; }
+.archive-date-filter { display:grid; gap:.2rem; color:var(--muted); font-size:.78rem; font-weight:700; }
+.archive-date-filter input { min-width:145px; }
 .local-review-banner {
   position: sticky; top: .4rem; z-index: 20;
   margin-bottom: .7rem; padding: .65rem .8rem;

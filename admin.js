@@ -21,6 +21,7 @@ const filters = { from: '', to: '', collection: '', customer: '', status: '', mo
 let activeTab = 'dash';
 let orderStatusTab = 'pending';
 let archiveSearch = '';
+const archiveFilters = { customer: '', invoice: '', from: '', to: '' };
 let archiveVisible = 10;
 let returnStatusTab = 'pending';
 let stockSortMode = false;
@@ -1258,6 +1259,10 @@ function renderOrders() {
     if (!b) return;
     orderStatusTab = b.dataset.st;
     archiveSearch = '';
+    archiveFilters.customer = '';
+    archiveFilters.invoice = '';
+    archiveFilters.from = '';
+    archiveFilters.to = '';
     archiveVisible = 10;
     renderOrders();
   };
@@ -1291,13 +1296,26 @@ function renderOrders() {
   const sortableView  = false;
   const archivable    = orders.filter(canArchive);
 
-  if (archiveView && archiveSearch) {
+  const archiveCustomers = archiveView ? [...new Map(orders.map((o) => {
+    const name = o.customers?.business_name || o.customers?.name || o.contact_name || 'ללא שם';
+    const key = o.customer_id || `name:${name}`;
+    return [key, { key, name }];
+  })).values()].sort((a, b) => a.name.localeCompare(b.name, 'he')) : [];
+
+  if (archiveView) {
     const q = archiveSearch.trim().toLowerCase();
     orders = orders.filter((o) => {
+      const customerName = o.customers?.business_name || o.customers?.name || o.contact_name || 'ללא שם';
+      const customerKey = o.customer_id || `name:${customerName}`;
       const iso = String(o.created_at || '').slice(0, 10);
       const dmy = iso ? iso.split('-').reverse().join('.') : '';
-      return [o.order_number, o.contact_name, o.customers?.name, o.customers?.business_name, iso, dmy]
+      const matchesSearch = !q || [o.order_number, o.contact_name, o.customers?.name, o.customers?.business_name, iso, dmy]
         .some((v) => String(v || '').toLowerCase().includes(q));
+      const matchesCustomer = !archiveFilters.customer || customerKey === archiveFilters.customer;
+      const matchesInvoice = archiveFilters.invoice !== 'missing' || !hasInvoice(o.id);
+      const matchesFrom = !archiveFilters.from || iso >= archiveFilters.from;
+      const matchesTo = !archiveFilters.to || iso <= archiveFilters.to;
+      return matchesSearch && matchesCustomer && matchesInvoice && matchesFrom && matchesTo;
     });
   }
   orders = keepSplitOrdersTogether(orders);
@@ -1312,7 +1330,7 @@ function renderOrders() {
     if (archiveView) {
       return `${!nInv && ['ready', 'shipped'].includes(o.status)
                 ? `<button class="btn sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>` : ''}
-              ${invoiceButton(o.id)}
+              ${invoiceButton(o.id, '⬇️ חשבונית', !nInv)}
               ${o.status === 'shipped' ? `<button class="btn ghost sm" data-resend-shipped="${o.id}">✉️ שליחה מחדש</button>` : ''}
               <button class="btn ghost sm" data-unarchive="${o.id}"
                 title="הוצאה מהארכיון" aria-label="הוצאה מהארכיון">↩️</button>`;
@@ -1370,9 +1388,18 @@ function renderOrders() {
   $('ordersTable').innerHTML = `
     ${futureView ? futureFolderSettings(orders.length) : ''}
     ${archiveView ? `<div class="archive-tools">
-       <div class="note small">ההזמנות שסיימו טיפול. ניתן לפתוח ולהוריד חשבוניות גם מכאן.</div>
        <input type="search" id="archiveSearch" value="${esc(archiveSearch)}"
          placeholder="🔍 חיפוש לפי מספר הזמנה, שם לקוח או תאריך" aria-label="חיפוש בארכיון">
+       <select id="archiveCustomer" aria-label="סינון לפי לקוח">
+         <option value="">כל הלקוחות</option>
+         ${archiveCustomers.map((customer) => `<option value="${esc(customer.key)}" ${archiveFilters.customer === customer.key ? 'selected' : ''}>${esc(customer.name)}</option>`).join('')}
+       </select>
+       <select id="archiveInvoice" aria-label="סינון לפי חשבונית">
+         <option value="" ${!archiveFilters.invoice ? 'selected' : ''}>כל החשבוניות</option>
+         <option value="missing" ${archiveFilters.invoice === 'missing' ? 'selected' : ''}>ללא חשבונית</option>
+       </select>
+       <label class="archive-date-filter"><span>מתאריך</span><input type="date" id="archiveFrom" value="${esc(archiveFilters.from)}"></label>
+       <label class="archive-date-filter"><span>עד תאריך</span><input type="date" id="archiveTo" value="${esc(archiveFilters.to)}"></label>
      </div>` : ''}
     ${cancelledView ? `<div class="note small">
        <b>שחזור</b> מחזיר את ההזמנה למצב "ממתינה". <b>מחיקה</b> היא לצמיתות —
@@ -1381,7 +1408,7 @@ function renderOrders() {
        <button class="btn ghost sm" id="archiveBucket">🗄️ העבר את כל ${fmtNum(archivable.length)} ההזמנות בלשונית לארכיון</button>
      </div>` : ''}
     ${!orders.length ? `<div class="empty"><div class="ico">${meta.icon}</div>
-       ${archiveSearch ? 'לא נמצאו הזמנות התואמות לחיפוש' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : groupedView
+       ${archiveSearch || Object.values(archiveFilters).some(Boolean) ? 'לא נמצאו הזמנות התואמות למסננים' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : groupedView
       ? `<div class="order-customer-groups">${groupedOrdersHtml()}</div>`
       : `<div class="table-wrap"><table class="responsive${sortableView ? ' order-sort-table' : ''}"><thead><tr>
       <th>#</th><th>לקוח</th><th>תאריך</th><th class="num">יח׳</th>
@@ -1419,6 +1446,18 @@ function renderOrders() {
     renderOrders();
     $('archiveSearch')?.focus();
   }, 180));
+  const applyArchiveFilters = () => {
+    archiveFilters.customer = $('archiveCustomer')?.value || '';
+    archiveFilters.invoice = $('archiveInvoice')?.value || '';
+    archiveFilters.from = $('archiveFrom')?.value || '';
+    archiveFilters.to = $('archiveTo')?.value || '';
+    archiveVisible = 10;
+    renderOrders();
+  };
+  on('archiveCustomer', 'change', applyArchiveFilters);
+  on('archiveInvoice', 'change', applyArchiveFilters);
+  on('archiveFrom', 'change', applyArchiveFilters);
+  on('archiveTo', 'change', applyArchiveFilters);
   on('archiveMore', 'click', () => { archiveVisible += 10; renderOrders(); });
 
   on('archiveBucket', 'click', async () => {
@@ -1432,6 +1471,9 @@ function renderOrders() {
   });
 
   on('futureCollectionsSave', 'click', saveFutureCollections);
+  $('futureCollectionsBox')?.addEventListener('change', (event) => {
+    if (event.target.closest('[data-future-collection]')) saveFutureCollections();
+  });
   on('releaseFutureOrders', 'click', releaseFutureOrders);
 
   if (sortableView) {
@@ -1491,16 +1533,20 @@ async function saveFutureCollections() {
   const button = $('futureCollectionsSave');
   const ids = $$('#futureCollectionsBox [data-future-collection]:checked')
     .map((input) => input.dataset.futureCollection);
+  const previousIds = new Set(db.futureCollections.map((item) => item.collection_id));
+  const removedCollection = [...previousIds].some((id) => !ids.includes(id));
   if (button) button.disabled = true;
+  $$('#futureCollectionsBox [data-future-collection]').forEach((input) => { input.disabled = true; });
   try {
     const { data, error } = await sb.rpc('set_future_order_collections', { p_collection_ids: ids });
     if (error) throw error;
     toast(`נשמרו ${fmtNum(data?.collections ?? ids.length)} קולקציות · ${fmtNum(data?.future_orders ?? 0)} הזמנות בתיקייה`);
-    orderStatusTab = 'future';
+    orderStatusTab = removedCollection ? 'pending' : 'future';
     await loadAll();
   } catch (err) {
     toast(friendlyError(err), true);
     if (button) button.disabled = false;
+    $$('#futureCollectionsBox [data-future-collection]').forEach((input) => { input.disabled = false; });
   }
 }
 
