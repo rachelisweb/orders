@@ -3065,6 +3065,7 @@ function stockProducts() {
   const q = $('stockSearch').value.trim().toLowerCase();
   const col = $('stockCollection').value;
   return db.products.filter((p) => {
+    if (p.retired_at) return false;
     if (col && p.collection_id !== col) return false;
     if (!q) return true;
     return p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q);
@@ -3076,10 +3077,10 @@ function renderStockCollectionTabs() {
   if (!box) return;
   const selected = $('stockCollection').value;
   const tabs = [
-    { id: '', name: 'כל הקולקציות', icon: '🗂️', count: db.products.length },
+    { id: '', name: 'כל הקולקציות', icon: '🗂️', count: db.products.filter((p) => !p.retired_at).length },
     ...db.collections.map((c) => ({
       id: c.id, name: c.name, icon: c.icon || '📁',
-      count: db.products.filter((p) => p.collection_id === c.id).length,
+      count: db.products.filter((p) => !p.retired_at && p.collection_id === c.id).length,
     })),
   ];
   box.innerHTML = tabs.map((tab) => `
@@ -3161,6 +3162,7 @@ function renderStock() {
                 aria-label="בחירת דגם ${esc(p.model)}"> בחירה
             </label>
             <button class="btn ghost sm" data-edit="${p.id}">✏️ עריכה</button>
+            <button class="btn danger sm" data-remove-product="${p.id}" aria-label="הסרת דגם ${esc(p.model)}">🗑️ הסרה</button>
           </div>
         </div>
         ${p.description ? `<div class="product-desc">${esc(p.description)}</div>` : ''}
@@ -3207,9 +3209,69 @@ function renderStock() {
     }
     const ed = e.target.closest('[data-edit]');
     if (ed) editProduct(ed.dataset.edit);
+    const remove = e.target.closest('[data-remove-product]');
+    if (remove) removeProduct(remove.dataset.removeProduct);
   };
 
   updateBulkBar();
+}
+
+async function removeProduct(id) {
+  const product = db.products.find((item) => item.id === id);
+  if (!product) return;
+  try {
+    const { data: preview, error } = await sb.rpc('remove_product_safely', {
+      p_product_id: id,
+      p_confirm: false,
+    });
+    if (error) throw error;
+    const affectedOrders = Number(preview.pending_orders || 0)
+      + Number(preview.future_orders || 0) + Number(preview.ready_orders || 0);
+    const affectedUnits = Number(preview.pending_units || 0)
+      + Number(preview.future_units || 0) + Number(preview.ready_units || 0);
+    const blocked = Number(preview.invoice_blockers || 0);
+    const keepsHistory = preview.mode === 'retired';
+
+    modal(`הסרת דגם ${esc(product.model)}`, `
+      <div class="note warn small">
+        הפעולה תסיר את הדגם מהמלאי ומכל ההזמנות הפתוחות: ממתינות, לעונה הבאה ומוכנות לאיסוף.
+      </div>
+      <div class="invoice-summary-grid">
+        <div><span>ממתינות</span><b>${fmtNum(preview.pending_orders || 0)} הזמנות · ${fmtNum(preview.pending_units || 0)} יח׳</b></div>
+        <div><span>לעונה הבאה</span><b>${fmtNum(preview.future_orders || 0)} הזמנות · ${fmtNum(preview.future_units || 0)} יח׳</b></div>
+        <div><span>מוכנות</span><b>${fmtNum(preview.ready_orders || 0)} הזמנות · ${fmtNum(preview.ready_units || 0)} יח׳</b></div>
+        <div><span>הזמנות שנשלחו</span><b>${fmtNum(preview.shipped_orders || 0)}</b></div>
+      </div>
+      <div class="note small">${keepsHistory
+        ? 'קיימות הזמנות שנשלחו: הדגם יישמר בהיסטוריה עם התמונה והמחירים, אך לא יופיע יותר במלאי או בקטלוג.'
+        : 'אין הזמנות שנשלחו עם הדגם: כרטיס הדגם יימחק לחלוטין.'}</div>
+      ${blocked ? `<div class="note danger-note small">לא ניתן לבצע כרגע: ל־${fmtNum(blocked)} מההזמנות שיושפעו קיימת חשבונית פעילה.</div>` : ''}
+      <div class="small muted" style="margin:.75rem 0">בסך הכול יוסרו ${fmtNum(affectedUnits)} יח׳ מתוך ${fmtNum(affectedOrders)} הזמנות פתוחות. הזמנות שיישארו ללא פריטים יימחקו.</div>
+      ${blocked ? '' : `<button class="btn danger block lg" id="removeProductConfirm">אישור הסרת הדגם</button>`}
+    `, true);
+
+    on('removeProductConfirm', 'click', async () => {
+      $('removeProductConfirm').disabled = true;
+      try {
+        const { data, error: removeError } = await sb.rpc('remove_product_safely', {
+          p_product_id: id,
+          p_confirm: true,
+        });
+        if (removeError) throw removeError;
+        picked.delete(id);
+        closeModal();
+        toast(data.mode === 'retired'
+          ? `דגם ${product.model} הוסר ונשמר בהיסטוריית המשלוחים`
+          : `דגם ${product.model} נמחק לחלוטין`);
+        await loadAll();
+      } catch (removeError) {
+        toast(friendlyError(removeError), true);
+        $('removeProductConfirm').disabled = false;
+      }
+    });
+  } catch (error) {
+    toast(friendlyError(error), true);
+  }
 }
 
 // ── עדכון מחירים לבחירה מרובה ───────────────────────────────
