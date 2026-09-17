@@ -1300,6 +1300,7 @@ function renderOrders() {
   const cancelledView = orderStatusTab === 'cancelled';
   const pendingView   = orderStatusTab === 'pending';
   const groupedView   = !archiveView && !cancelledView;
+  const sortableGroupedView = pendingView || futureView;
   const sortableView  = false;
   const archivable    = orders.filter(canArchive);
 
@@ -1366,11 +1367,18 @@ function renderOrders() {
     return parts.length ? `<span class="row" style="gap:.3rem">${parts.join(' ')}</span>` : '';
   };
 
-  const groupedOrdersHtml = () => groupActionOrdersByCustomer(visibleOrders).map((customer) => {
+  const groupedCustomers = groupedView ? groupActionOrdersByCustomer(visibleOrders) : [];
+  const groupedOrdersByKey = new Map(groupedCustomers.map((customer) => [
+    customer.orders[0]?.id,
+    customer.orders.map((order) => order.id),
+  ]));
+  const groupedOrdersHtml = () => groupedCustomers.map((customer) => {
     const canMerge = customer.orders.length > 1
       && ['pending', 'ready'].includes(orderStatusTab)
       && customer.orders.every((order) => !hasInvoice(order.id) && !order.future_order_at);
-    return `<div class="act-customer-card order-customer-card">
+    const sortKey = customer.orders[0]?.id || '';
+    return `<div class="act-customer-card order-customer-card"${sortableGroupedView
+      ? ` data-sort-key="${sortKey}" title="לחיצה ממושכת וגרירה לשינוי הסדר"` : ''}>
       <div class="act-customer-title">
         <span>${esc(customer.name)}</span>
         ${customer.orders.length > 1 ? `<span class="row act-customer-tools">
@@ -1429,7 +1437,8 @@ function renderOrders() {
      </div>` : ''}
     ${!orders.length ? `<div class="empty"><div class="ico">${meta.icon}</div>
        ${archiveSearch || Object.values(archiveFilters).some(Boolean) ? 'לא נמצאו הזמנות התואמות למסננים' : `אין הזמנות ב"${esc(meta.label)}"`}</div>` : groupedView
-      ? `<div class="order-customer-groups">${groupedOrdersHtml()}</div>`
+      ? `<div class="order-customer-groups${sortableGroupedView ? ' order-customer-groups-sortable' : ''}"
+          ${sortableGroupedView ? 'id="ordersCustomerGroups" aria-label="הזמנות — לחיצה ממושכת מאפשרת שינוי סדר"' : ''}>${groupedOrdersHtml()}</div>`
       : `<div class="table-wrap"><table class="responsive${sortableView ? ' order-sort-table' : ''}"><thead><tr>
       <th>#</th><th>לקוח</th><th>תאריך</th><th class="num">יח׳</th>
       <th class="num">סכום</th>${archiveView ? '<th>סטטוס</th>' : ''}<th class="num">🧾</th><th></th>
@@ -1509,6 +1518,12 @@ function renderOrders() {
 
   if (sortableView) {
     makeLongPressSortable($('ordersRows'), (orderIds) => saveOrderBucketOrder(orderStatusTab, orderIds));
+  }
+  if (sortableGroupedView) {
+    makeLongPressSortable($('ordersCustomerGroups'), (groupKeys) => {
+      const orderIds = groupKeys.flatMap((key) => groupedOrdersByKey.get(key) || []);
+      return saveOrderBucketOrder(orderStatusTab, orderIds);
+    });
   }
 
   $('ordersTable').onclick = async (e) => {
