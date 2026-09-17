@@ -3465,11 +3465,28 @@ function editProduct(id) {
 
     $('pSave').disabled = true;
     try {
-      const { error } = p
-        ? await sb.from('products').update(rec).eq('id', p.id)
-        : await sb.from('products').insert(rec);
+      let error = null;
+      let renamedOrderItems = 0;
+      if (p && model !== p.model) {
+        const renameResult = await sb.rpc('rename_product_model', {
+          p_product_id: p.id,
+          p_new_model: model,
+        });
+        error = renameResult.error;
+        renamedOrderItems = Number(renameResult.data?.order_items || 0);
+      }
+      if (!error) {
+        const productRec = p ? { ...rec } : rec;
+        if (p) delete productRec.model;
+        const saveResult = p
+          ? await sb.from('products').update(productRec).eq('id', p.id)
+          : await sb.from('products').insert(productRec);
+        error = saveResult.error;
+      }
       if (error) throw error;
-      toast(p ? 'הדגם עודכן' : 'הדגם נוסף');
+      toast(p
+        ? `הדגם עודכן${renamedOrderItems ? ` וסונכרן ב־${fmtNum(renamedOrderItems)} שורות הזמנה` : ''}`
+        : 'הדגם נוסף');
       closeModal();
       await loadAll();
     } catch (err) {
