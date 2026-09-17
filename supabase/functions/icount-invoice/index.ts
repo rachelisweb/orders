@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
     if (profile?.role !== 'admin') return jsonResponse({ ok: false, error: 'הפקת חשבונית מותרת למנהל בלבד' }, 403);
 
     const body = await req.json();
-    if (!['health', 'client_search', 'client_link', 'client_create', 'client_unlink', 'preview', 'create', 'refund_preview', 'refund_create', 'flexible_preview', 'flexible_create'].includes(body?.action)) {
+    if (!['health', 'client_search', 'client_link', 'client_create', 'client_unlink', 'sync_order_prices', 'preview', 'create', 'refund_preview', 'refund_create', 'flexible_preview', 'flexible_create'].includes(body?.action)) {
       return jsonResponse({ ok: false, error: 'action לא חוקי' }, 400);
     }
 
@@ -739,6 +739,36 @@ Deno.serve(async (req) => {
     const { data: existingInvoice } = await service.from('invoices').select('id, invoice_number, file_path')
       .eq('order_id', orderId).neq('status', 'cancelled').limit(1).maybeSingle();
     if (existingInvoice) return jsonResponse({ ok: false, error: 'כבר קיימת חשבונית להזמנה זו', invoice: existingInvoice }, 409);
+
+    if (body.action === 'sync_order_prices') {
+      const zeroPriceItems = (order.order_items || []).filter((item: OrderItem) =>
+        Number(item.qty || 0) > 0 && Number(item.unit_price || 0) <= 0);
+      if (!zeroPriceItems.length) return jsonResponse({ ok: true, updated_items: 0 });
+
+      const zeroProductIds = [...new Set(zeroPriceItems.map((item: OrderItem) => item.product_id).filter(Boolean))];
+      const { data: pricedProducts, error: pricesError } = await service.from('products')
+        .select('id, model, wholesale_price, cost_price').in('id', zeroProductIds);
+      if (pricesError) throw pricesError;
+      const productsById = new Map((pricedProducts || []).map((product: any) => [product.id, product]));
+      const missingModels: string[] = [];
+      const updates: Array<{ id: number; price: number }> = [];
+      for (const item of zeroPriceItems) {
+        const product: any = productsById.get(item.product_id);
+        const price = Number(order.pricing_mode === 'cost' ? product?.cost_price : product?.wholesale_price);
+        if (!Number.isFinite(price) || price <= 0) missingModels.push(item.model);
+        else updates.push({ id: item.id, price });
+      }
+      if (missingModels.length) {
+        return jsonResponse({ ok: false, error: `עדיין חסר מחיר מעודכן לדגמים: ${[...new Set(missingModels)].join(', ')}` }, 409);
+      }
+      for (const update of updates) {
+        const { error } = await service.from('order_items').update({ unit_price: update.price }).eq('id', update.id);
+        if (error) throw error;
+      }
+      const { error: recalcError } = await service.rpc('recalc_order', { p_order_id: orderId });
+      if (recalcError) throw recalcError;
+      return jsonResponse({ ok: true, updated_items: updates.length });
+    }
 
     const productIds = [...new Set((order.order_items || []).map((x: OrderItem) => x.product_id).filter(Boolean))];
     const descriptions = new Map<string, string>();

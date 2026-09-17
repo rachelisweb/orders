@@ -1357,8 +1357,8 @@ function renderOrders() {
     if (o.status === 'ready' && !nInv) {
       parts.push(`<button class="btn ghost sm" data-generate-invoice="${o.id}">🧾 הפקת חשבונית</button>`);
     }
-    if (['ready', 'shipped'].includes(o.status)) {
-      parts.push(invoiceButton(o.id, nInv ? '⬇️ חשבונית' : '⬆️ חשבונית', !nInv && groupedView));
+    if (nInv && ['ready', 'shipped'].includes(o.status)) {
+      parts.push(invoiceButton(o.id, '⬇️ חשבונית'));
     }
     if (canArchive(o)) {
       parts.push(`<button class="btn ghost sm" data-archive="${o.id}" title="העברה לארכיון">🗄️</button>`);
@@ -4507,6 +4507,28 @@ async function openIcountInvoicePreview(orderId) {
     toast('ניתן להפיק מסמך להזמנה מוכנה, או להזמנה שסופקה ונמצאת בארכיון', true); return;
   }
   if (latestInvoice(order.id)) { toast('כבר קיים מסמך להזמנה — ניתן להוריד אותו', true); return; }
+
+  if ((order.order_items || []).some((item) => Number(item.qty || 0) > 0 && Number(item.unit_price || 0) <= 0)) {
+    modal(`הפקת מסמך להזמנה #${order.order_number}`, `
+      <div class="empty"><div class="ico">🔄</div>מסנכרן את מחירי ההזמנה ממחירי הדגמים העדכניים…</div>
+    `, true);
+    try {
+      const { data, error } = await sb.functions.invoke('icount-invoice', {
+        body: { action: 'sync_order_prices', order_id: order.id },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error(data?.error || 'סנכרון המחירים נכשל');
+      await loadAll();
+      toast(`סונכרנו מחירים ל-${fmtNum(data.updated_items || 0)} פריטים`);
+      return openIcountInvoicePreview(order.id);
+    } catch (error) {
+      modal(`הפקת מסמך להזמנה #${order.order_number}`, `
+        <div class="note danger-note">לא ניתן לסנכרן את מחירי ההזמנה.</div>
+        <div class="err-msg show">${esc(friendlyError(error))}</div>
+      `, true);
+      return;
+    }
+  }
 
   const customer = db.customers.find((c) => c.id === order.customer_id);
   const p = buildInvoicePreview(order);
