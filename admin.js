@@ -42,7 +42,7 @@ let realtimeRefreshQueued = false;
 let realtimePanelOrderId = null;
 const futureOrderMutations = new Set();
 const readyQuantityEditOrders = new Set();
-const readyQuantitySavePromises = new Map();
+const quantitySavePromises = new Map();
 const LOCAL_REVIEW = new URLSearchParams(location.search).get('review') === '1';
 const MOCK_REVIEW = LOCAL_REVIEW
   && ['localhost', '127.0.0.1'].includes(location.hostname)
@@ -469,10 +469,11 @@ async function runRealtimeRefresh() {
   if (realtimeRefreshRunning || document.hidden) return;
   const overlay = $('orderOverlay');
   const orderId = overlay?.classList.contains('active') ? overlay.dataset.orderId : null;
-  // Each saved quantity emits realtime events. While editing a ready order,
-  // refresh only its inventory snapshot: warnings stay live without replacing
-  // focused inputs. "Finish editing" still performs one consolidated reload.
-  if (orderId && readyQuantityEditOrders.has(orderId)) {
+  const quantityEditorOpen = !!overlay?.querySelector('[data-item]');
+  // Each saved quantity emits realtime events. While any order quantity editor
+  // is open, refresh only inventory warnings: a full panel render would replace
+  // the focused field, close the mobile keyboard and move the scroll position.
+  if (orderId && quantityEditorOpen) {
     realtimeRefreshRunning = true;
     realtimeRefreshQueued = false;
     try {
@@ -1732,6 +1733,8 @@ async function advanceOrder(id, status, skipConfirm = false) {
   const o = db.orders.find((x) => x.id === id);
   const label = ORDER_STATUS[status].label;
 
+  await waitForOrderQuantitySaves(id);
+
   if (!skipConfirm) {
     if (status === 'ready') {
       const models = [...new Set((o?.order_items || []).map((item) => item.model))];
@@ -1925,21 +1928,21 @@ function openOrder(id) {
         <div><span class="muted">מיילים:</span> ${customerEmailList(o.customers).length
           ? customerEmailList(o.customers).map((email) => `<a href="mailto:${esc(email)}">${esc(email)}</a>`).join(' · ')
           : (o.email ? `<a href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : '—')}</div>
-        <div><span class="muted">יחידות:</span> <b>${fmtNum(o.total_units)}</b></div>
+        <div><span class="muted">יחידות:</span> <b data-order-total-units>${fmtNum(o.total_units)}</b></div>
         <div class="order-payment-summary">
           <div><span class="muted">לתשלום:</span>
             ${o.status === 'ready'
               ? `<span class="inline-payable"><input type="number" id="payableTotal" min="0" max="${sub}" step="0.01"
                     inputmode="decimal" value="${Number(o.total_amount || 0).toFixed(2)}" aria-label="סכום לתשלום">
                    <button class="btn sm" id="payableSave">שמירה</button></span>`
-              : `<b>${o.total_amount > 0 ? fmtMoney(o.total_amount) : '—'}</b>`}
+              : `<b data-order-total-amount>${o.total_amount > 0 ? fmtMoney(o.total_amount) : '—'}</b>`}
           </div>
-          <div><span class="muted">סה״כ כולל מע״מ:</span> <b>${fmtMoney(Number(o.total_amount || 0) * 1.18)}</b></div>
+          <div><span class="muted">סה״כ כולל מע״מ:</span> <b data-order-total-vat>${fmtMoney(Number(o.total_amount || 0) * 1.18)}</b></div>
         </div>
       </div>
       ${o.discount_amount > 0 ? `<div class="small" style="margin-top:.5rem">
-        <span class="muted">לפני הנחה:</span> ${fmtMoney(sub)} ·
-        <span class="muted">הנחה:</span> <b style="color:var(--success)">−${fmtMoney(o.discount_amount)}</b>
+        <span class="muted">לפני הנחה:</span> <span data-order-subtotal>${fmtMoney(sub)}</span> ·
+        <span class="muted">הנחה:</span> <b data-order-discount style="color:var(--success)">−${fmtMoney(o.discount_amount)}</b>
         ${o.discount_type === 'pct' ? ` <span class="chip green">${o.discount_value}%</span>` : ''}
       </div>` : ''}
       ${o.notes ? `<div class="small" style="margin-top:.5rem"><span class="muted">הערת לקוח:</span> ${esc(o.notes)}</div>` : ''}
@@ -2166,6 +2169,44 @@ function wireOrderPanel(o, sub) {
   });
 }
 
+function recalculateOrderLocally(order) {
+  const subtotal = roundMoney((order.order_items || [])
+    .reduce((sum, item) => sum + Number(item.qty || 0) * Number(item.unit_price || 0), 0));
+  const discountValue = Number(order.discount_value || 0);
+  const discount = order.discount_type === 'pct'
+    ? roundMoney(subtotal * Math.min(Math.max(discountValue, 0), 100) / 100)
+    : order.discount_type === 'amt' ? Math.min(Math.max(discountValue, 0), subtotal) : 0;
+  order.total_units = (order.order_items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  order.subtotal_amount = subtotal;
+  order.discount_amount = discount;
+  order.total_amount = Math.max(subtotal - discount, 0);
+}
+
+function refreshOpenOrderSummary(order) {
+  const units = document.querySelector('#orderPanelBody [data-order-total-units]');
+  const amount = document.querySelector('#orderPanelBody [data-order-total-amount]');
+  const vat = document.querySelector('#orderPanelBody [data-order-total-vat]');
+  const subtotal = document.querySelector('#orderPanelBody [data-order-subtotal]');
+  const discount = document.querySelector('#orderPanelBody [data-order-discount]');
+  if (units) units.textContent = fmtNum(order.total_units);
+  if (amount) amount.textContent = order.total_amount > 0 ? fmtMoney(order.total_amount) : '—';
+  if (vat) vat.textContent = fmtMoney(Number(order.total_amount || 0) * 1.18);
+  if (subtotal) subtotal.textContent = fmtMoney(order.subtotal_amount);
+  if (discount) discount.textContent = `−${fmtMoney(order.discount_amount)}`;
+  const payable = $('payableTotal');
+  if (payable && document.activeElement !== payable) {
+    payable.max = String(order.subtotal_amount);
+    payable.value = Number(order.total_amount || 0).toFixed(2);
+  }
+}
+
+async function waitForOrderQuantitySaves(orderId) {
+  const pending = [...quantitySavePromises.entries()]
+    .filter(([key]) => key.startsWith(`${orderId}:`))
+    .map(([, promise]) => promise);
+  if (pending.length) await Promise.allSettled(pending);
+}
+
 async function editItem(itemId, qty, orderId, input = null) {
   const order = db.orders.find((item) => item.id === orderId);
   const readyQuantityEdit = order?.status === 'ready' && readyQuantityEditOrders.has(orderId);
@@ -2184,34 +2225,36 @@ async function editItem(itemId, qty, orderId, input = null) {
     const savePromise = sb.rpc(rpc, {
       p_item_id: Number(itemId), p_qty: normalizedQty,
     });
-    if (readyQuantityEdit) readyQuantitySavePromises.set(saveKey, savePromise);
+    if (input) quantitySavePromises.set(saveKey, savePromise);
     const { data, error } = await savePromise;
     if (error) throw error;
     toast(normalizedQty > 0 ? 'הכמות עודכנה' : 'הכמות נשמרה כ־0');
 
-    if (readyQuantityEdit) {
+    if (input) {
       if (line) line.qty = normalizedQty;
-      const product = line ? productByModel(line.model) : null;
-      const inventoryDelta = Number(data?.inventory_delta || 0);
-      if (product && inventoryDelta) {
-        product.stock[line.size] = Number(product.stock?.[line.size] || 0) + inventoryDelta;
-        product.availableStock[line.size] = Number(product.availableStock?.[line.size] || 0) + inventoryDelta;
-        product.total = Number(product.total || 0) + inventoryDelta;
-      }
-      if (input) {
-        input.value = normalizedQty > 0 ? String(normalizedQty) : '';
-        input.classList.toggle('on', normalizedQty > 0);
-        const group = input.closest('.admin-order-model');
-        const modelUnits = group?.querySelector('[data-order-model-units]');
-        if (modelUnits && line) {
-          const units = order.order_items
-            .filter((item) => item.model === line.model)
-            .reduce((sum, item) => sum + Number(item.qty || 0), 0);
-          modelUnits.textContent = `${fmtNum(units)} יח׳`;
+      if (readyQuantityEdit) {
+        const product = line ? productByModel(line.model) : null;
+        const inventoryDelta = Number(data?.inventory_delta || 0);
+        if (product && inventoryDelta) {
+          product.stock[line.size] = Number(product.stock?.[line.size] || 0) + inventoryDelta;
+          product.availableStock[line.size] = Number(product.availableStock?.[line.size] || 0) + inventoryDelta;
+          product.total = Number(product.total || 0) + inventoryDelta;
         }
-        const stockWarning = input.closest('.admin-order-size')?.querySelector('[data-stock-out]');
-        if (stockWarning) stockWarning.hidden = !orderLineIsOutOfStock(line);
       }
+      recalculateOrderLocally(order);
+      refreshOpenOrderSummary(order);
+      input.value = normalizedQty > 0 ? String(normalizedQty) : '';
+      input.classList.toggle('on', normalizedQty > 0);
+      const group = input.closest('.admin-order-model');
+      const modelUnits = group?.querySelector('[data-order-model-units]');
+      if (modelUnits && line) {
+        const units = order.order_items
+          .filter((item) => item.model === line.model)
+          .reduce((sum, item) => sum + Number(item.qty || 0), 0);
+        modelUnits.textContent = `${fmtNum(units)} יח׳`;
+      }
+      const stockWarning = input.closest('.admin-order-size')?.querySelector('[data-stock-out]');
+      if (stockWarning) stockWarning.hidden = !orderLineIsOutOfStock(line);
       return;
     }
 
@@ -2220,10 +2263,10 @@ async function editItem(itemId, qty, orderId, input = null) {
     else { $('orderOverlay').classList.remove('active'); toast('ההזמנה נותרה ללא פריטים', true); }
   } catch (err) {
     toast(friendlyError(err), true);
-    if (readyQuantityEdit && input) input.value = previousQty > 0 ? String(previousQty) : '';
+    if (input) input.value = previousQty > 0 ? String(previousQty) : '';
     else openOrder(orderId);
   } finally {
-    if (readyQuantitySavePromises.get(saveKey)) readyQuantitySavePromises.delete(saveKey);
+    if (quantitySavePromises.get(saveKey)) quantitySavePromises.delete(saveKey);
     if (input?.isConnected) {
       input.disabled = false;
       input.removeAttribute('aria-busy');
@@ -6381,10 +6424,7 @@ function wire() {
       const orderId = readyQtyEdit.dataset.readyQtyEdit;
       if (readyQuantityEditOrders.has(orderId)) {
         readyQtyEdit.disabled = true;
-        const pendingSaves = [...readyQuantitySavePromises.entries()]
-          .filter(([key]) => key.startsWith(`${orderId}:`))
-          .map(([, promise]) => promise);
-        if (pendingSaves.length) await Promise.allSettled(pendingSaves);
+        await waitForOrderQuantitySaves(orderId);
         readyQuantityEditOrders.delete(orderId);
         clearTimeout(realtimeRefreshTimer);
         realtimeRefreshQueued = false;
