@@ -1458,7 +1458,7 @@ function renderOrders() {
             : '')
         : '—', 'num')}
       ${archiveView ? td('סטטוס', statusChip(ORDER_STATUS, o.status)) : ''}
-      ${td('חשבוניות', nInv ? `<span class="chip green">${nInv}</span>` : '—', 'num')}
+      ${td('חשבוניות', nInv ? '<span class="chip green" title="קיימת חשבונית" aria-label="קיימת חשבונית">✓</span>' : '—', 'num')}
       ${td('', rowActions(o, next, nInv), 'nowrap')}
     </tr>`; }).join('')}
     </tbody></table></div>`}
@@ -3179,6 +3179,7 @@ function renderStock() {
           }).join('')}
         </div>
         <div class="stock-product-meta">
+          ${p.barcode ? `<span><span class="muted">ברקוד:</span> ${esc(p.barcode)}</span>` : ''}
           <span><span class="muted">עלות:</span> ${p.cost_price > 0 ? fmtMoney(p.cost_price) : '<span class="chip amber">חסר</span>'}</span>
           <span><span class="muted">סיטונאי:</span> ${p.wholesale_price > 0 ? fmtMoney(p.wholesale_price) : '—'}</span>
           <span><span class="muted">קמעונאי:</span> ${p.retail_price > 0 ? fmtMoney(p.retail_price) : '—'}</span>
@@ -3397,6 +3398,9 @@ function editProduct(id) {
         `<option value="${c.id}" ${p?.collection_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
     <div class="field"><label>תיאור קצר</label>
       <textarea id="pDesc" rows="2" placeholder="חומר, גזרה, פרטים…">${esc(p?.description || '')}</textarea></div>
+    <div class="field"><label>מספר ברקוד</label>
+      <input type="text" id="pBarcode" value="${esc(p?.barcode || '')}" maxlength="100"
+        inputmode="numeric" autocomplete="off" placeholder="אופציונלי — יוצג במסמכים שיופקו"></div>
     <div class="field"><label>תמונה</label>
       <div class="product-image-source">
         <input type="text" id="pImage" value="${esc(p?.image_url || '')}" placeholder="הדבקת קישור לתמונה…">
@@ -3518,6 +3522,7 @@ function editProduct(id) {
       model,
       collection_id: $('pCollection').value,
       description: $('pDesc').value.trim() || null,
+      barcode: $('pBarcode').value.trim() || null,
       image_url:   $('pImage').value.trim() || null,
       cost_price:      Number($('pCost').value) || 0,
       wholesale_price: Number($('pWholesale').value) || 0,
@@ -4701,10 +4706,11 @@ async function openIcountInvoicePreview(orderId) {
       ${blockers.length ? `<div class="note danger-note small"><b>לא ניתן להפיק:</b> ${blockers.map(esc).join(' · ')}</div>` : ''}
       ${warnings.length ? `<div class="note warn small"><b>יש לבדוק:</b> ${warnings.map(esc).join(' · ')}</div>` : ''}
       <div class="table-wrap"><table><thead><tr>
-        <th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
+        <th>דגם ופירוט</th><th>ברקוד</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
       </tr></thead><tbody>
         ${p.items.map((x) => `<tr>
           <td><b>${esc(x.model)}</b>${x.description ? `<div class="small muted">${esc(x.description)}</div>` : ''}</td>
+          <td>${x.barcode ? esc(x.barcode) : '<span class="faint">—</span>'}</td>
           <td class="num">${fmtNum(x.quantity)}</td>
           <td class="num">${fmtMoney(x.unit_price)}</td>
           <td class="num">${fmtMoney(x.quantity * x.unit_price)}</td>

@@ -137,7 +137,9 @@ async function icountCall(token: string, path: string, body: Record<string, unkn
   return data;
 }
 
-function invoiceLines(orderItems: OrderItem[], descriptions: Map<string, string>) {
+type ProductDocumentData = { description: string; barcode: string };
+
+function invoiceLines(orderItems: OrderItem[], products: Map<string, ProductDocumentData>) {
   const groups = new Map<string, any>();
   for (const item of orderItems) {
     const qty = Number(item.qty || 0);
@@ -145,9 +147,10 @@ function invoiceLines(orderItems: OrderItem[], descriptions: Map<string, string>
     if (qty <= 0) continue;
     const key = `${item.model}\u0000${unitPrice.toFixed(2)}`;
     if (!groups.has(key)) groups.set(key, {
-      sku: item.model,
+      sku: products.get(item.product_id || '')?.barcode || '',
       model: item.model,
-      description: descriptions.get(item.product_id || '') || '',
+      barcode: products.get(item.product_id || '')?.barcode || '',
+      description: products.get(item.product_id || '')?.description || '',
       quantity: 0,
       unitprice: unitPrice,
     });
@@ -366,7 +369,7 @@ Deno.serve(async (req) => {
 
       const productIds = [...new Set(returnItems.map((item: any) => item.product_id).filter(Boolean))];
       const { data: products, error: productsError } = productIds.length
-        ? await service.from('products').select('id, model, description, wholesale_price, cost_price').in('id', productIds)
+        ? await service.from('products').select('id, model, description, barcode, wholesale_price, cost_price').in('id', productIds)
         : { data: [], error: null };
       if (productsError) throw productsError;
       const productsById = new Map<string, any>();
@@ -408,7 +411,9 @@ Deno.serve(async (req) => {
         }
         const key = `${model}\u0000${unitprice.toFixed(2)}`;
         if (!grouped.has(key)) grouped.set(key, {
-          sku: model,
+          sku: String(product?.barcode || '').trim(),
+          barcode: String(product?.barcode || '').trim(),
+          model,
           description: product?.description || model,
           quantity: 0,
           unitprice,
@@ -474,8 +479,9 @@ Deno.serve(async (req) => {
             currency_code: 'ILS',
             vat_percent: VAT_PERCENT,
             items: lines.map((item) => ({
-              sku: item.sku,
-              description: item.description,
+              sku: item.barcode || undefined,
+              description: item.description && item.description !== item.model
+                ? `${item.model} — ${item.description}` : item.model,
               quantity: item.quantity,
               unitprice: item.unitprice,
             })),
@@ -771,14 +777,17 @@ Deno.serve(async (req) => {
     }
 
     const productIds = [...new Set((order.order_items || []).map((x: OrderItem) => x.product_id).filter(Boolean))];
-    const descriptions = new Map<string, string>();
+    const productDocumentData = new Map<string, ProductDocumentData>();
     if (productIds.length) {
-      const { data: products, error: productsError } = await service.from('products').select('id, description').in('id', productIds);
+      const { data: products, error: productsError } = await service.from('products').select('id, description, barcode').in('id', productIds);
       if (productsError) throw productsError;
-      for (const product of products || []) descriptions.set(product.id, product.description || '');
+      for (const product of products || []) productDocumentData.set(product.id, {
+        description: product.description || '',
+        barcode: String(product.barcode || '').trim(),
+      });
     }
 
-    const lines = invoiceLines(order.order_items || [], descriptions);
+    const lines = invoiceLines(order.order_items || [], productDocumentData);
     if (!lines.length) return jsonResponse({ ok: false, error: 'אין פריטים לחשבונית' }, 409);
     if (lines.some((x) => x.unitprice <= 0)) return jsonResponse({ ok: false, error: 'יש פריט במחיר 0 — ההפקה נעצרה' }, 409);
     const customer = order.customers;
@@ -906,7 +915,7 @@ Deno.serve(async (req) => {
           ...(doctype === 'receipt' ? {} : {
             vat_percent: VAT_PERCENT,
             items: lines.map((x) => ({
-              sku: x.model,
+              sku: x.barcode || undefined,
               description: x.description ? `${x.model} — ${x.description}` : x.model,
               quantity: x.quantity,
               unitprice: x.unitprice,
