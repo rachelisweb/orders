@@ -1837,6 +1837,18 @@ function sortOrderItemGroups(groups, savedOrder = []) {
   });
 }
 
+function refreshOrderItemDifference(input, line, qty) {
+  const sizeRow = input?.closest('.admin-order-size');
+  const orderedNote = sizeRow?.querySelector('[data-ordered-note]');
+  if (!sizeRow || !orderedNote || !line) return;
+  const ordered = Number(line.qty_ordered ?? line.qty);
+  const current = Number.isFinite(qty) && qty >= 0 ? Math.floor(qty) : 0;
+  const differsFromOrder = ordered !== current;
+  sizeRow.classList.toggle('short', differsFromOrder);
+  orderedNote.textContent = `הוזמן ${fmtNum(ordered)}`;
+  orderedNote.hidden = !differsFromOrder;
+}
+
 function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels = [], orderId = '', modelCheckable = quantityEditable) {
   const checked = new Set(checkedModels || []);
   return `<div class="admin-order-models" aria-label="דגמי ההזמנה — לחיצה ממושכת מאפשרת שינוי סדר">
@@ -1864,9 +1876,9 @@ function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels
             const short = ordered !== line.qty;
             const outOfStock = orderLineIsOutOfStock(line);
             return `<div class="admin-order-size ${short ? 'short' : ''}" data-order-item="${line.id}">
+              <span class="qty-diff" data-ordered-note ${short ? '' : 'hidden'}>הוזמן ${fmtNum(ordered)}</span>
               <span class="admin-order-size-label">${esc(line.size)}</span>
               <div class="admin-order-size-qty">
-                ${short ? `<span class="small qty-diff">הוזמן ${fmtNum(ordered)}</span>` : ''}
                 ${quantityEditable
                   ? `<input type="number" min="0" value="${Number(line.qty) > 0 ? line.qty : ''}" placeholder="0" data-item="${line.id}"
                        aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">`
@@ -2029,11 +2041,18 @@ function openOrder(id) {
     </div>`;
 
   if (quantityEditable) {
+    $('orderPanelBody').oninput = (e) => {
+      const inp = e.target.closest('[data-item]');
+      if (!inp) return;
+      const line = lines.find((item) => String(item.id) === String(inp.dataset.item));
+      refreshOrderItemDifference(inp, line, parseInt(inp.value, 10));
+    };
     $('orderPanelBody').onchange = async (e) => {
       const inp = e.target.closest('[data-item]');
       if (inp) await editItem(inp.dataset.item, parseInt(inp.value, 10), o.id, inp);
     };
   } else {
+    $('orderPanelBody').oninput = null;
     $('orderPanelBody').onchange = null;
   }
 
@@ -2255,6 +2274,7 @@ async function editItem(itemId, qty, orderId, input = null) {
       }
       const stockWarning = input.closest('.admin-order-size')?.querySelector('[data-stock-out]');
       if (stockWarning) stockWarning.hidden = !orderLineIsOutOfStock(line);
+      refreshOrderItemDifference(input, line, normalizedQty);
       return;
     }
 
@@ -2263,7 +2283,10 @@ async function editItem(itemId, qty, orderId, input = null) {
     else { $('orderOverlay').classList.remove('active'); toast('ההזמנה נותרה ללא פריטים', true); }
   } catch (err) {
     toast(friendlyError(err), true);
-    if (input) input.value = previousQty > 0 ? String(previousQty) : '';
+    if (input) {
+      input.value = previousQty > 0 ? String(previousQty) : '';
+      refreshOrderItemDifference(input, line, previousQty);
+    }
     else openOrder(orderId);
   } finally {
     if (quantitySavePromises.get(saveKey)) quantitySavePromises.delete(saveKey);
