@@ -3179,7 +3179,7 @@ function renderStock() {
           }).join('')}
         </div>
         <div class="stock-product-meta">
-          ${p.barcode ? `<span><span class="muted">ברקוד:</span> ${esc(p.barcode)}</span>` : ''}
+          <span><span class="muted">מספר ברקוד:</span> ${esc(p.barcode || '')}</span>
           <span><span class="muted">עלות:</span> ${p.cost_price > 0 ? fmtMoney(p.cost_price) : '<span class="chip amber">חסר</span>'}</span>
           <span><span class="muted">סיטונאי:</span> ${p.wholesale_price > 0 ? fmtMoney(p.wholesale_price) : '—'}</span>
           <span><span class="muted">קמעונאי:</span> ${p.retail_price > 0 ? fmtMoney(p.retail_price) : '—'}</span>
