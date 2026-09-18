@@ -3179,6 +3179,7 @@ function renderStock() {
           }).join('')}
         </div>
         <div class="stock-product-meta">
+          <span><span class="muted">סה״כ:</span> <b data-stock-total="${p.id}">${fmtNum(p.total)}</b></span>
           <span><span class="muted">מספר ברקוד:</span> ${esc(p.barcode || '')}</span>
           <span><span class="muted">עלות:</span> ${p.cost_price > 0 ? fmtMoney(p.cost_price) : '<span class="chip amber">חסר</span>'}</span>
           <span><span class="muted">סיטונאי:</span> ${p.wholesale_price > 0 ? fmtMoney(p.wholesale_price) : '—'}</span>
@@ -3361,8 +3362,9 @@ async function saveStock(inp) {
       p.total = Object.values(p.stock).reduce((a, b) => a + b, 0);
       inp.value = qty > 0 ? String(qty) : '';
       inp.classList.toggle('on', qty > 0);
-      const total = document.querySelector(`[data-stock-total="${pid}"]`);
-      if (total) total.textContent = fmtNum(p.total);
+      document.querySelectorAll(`[data-stock-total="${pid}"]`).forEach((total) => {
+        total.textContent = fmtNum(p.total);
+      });
     }
     toast(`דגם ${p?.model} ${size} → ${qty}`);
   } catch (err) {
