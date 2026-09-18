@@ -1865,7 +1865,7 @@ function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels
               <div class="admin-order-size-qty">
                 ${short ? `<span class="small qty-diff">הוזמן ${fmtNum(ordered)}</span>` : ''}
                 ${quantityEditable
-                  ? `<input type="number" min="0" value="${line.qty}" data-item="${line.id}"
+                  ? `<input type="number" min="0" value="${Number(line.qty) > 0 ? line.qty : ''}" placeholder="0" data-item="${line.id}"
                        aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">`
                   : `<b>${short ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
                 <span class="order-stock-out" data-stock-out ${outOfStock ? '' : 'hidden'}>אזל מהמלאי</span>
@@ -2199,7 +2199,7 @@ async function editItem(itemId, qty, orderId, input = null) {
         product.total = Number(product.total || 0) + inventoryDelta;
       }
       if (input) {
-        input.value = String(normalizedQty);
+        input.value = normalizedQty > 0 ? String(normalizedQty) : '';
         input.classList.toggle('on', normalizedQty > 0);
         const group = input.closest('.admin-order-model');
         const modelUnits = group?.querySelector('[data-order-model-units]');
@@ -2220,7 +2220,7 @@ async function editItem(itemId, qty, orderId, input = null) {
     else { $('orderOverlay').classList.remove('active'); toast('ההזמנה נותרה ללא פריטים', true); }
   } catch (err) {
     toast(friendlyError(err), true);
-    if (readyQuantityEdit && input) input.value = String(previousQty);
+    if (readyQuantityEdit && input) input.value = previousQty > 0 ? String(previousQty) : '';
     else openOrder(orderId);
   } finally {
     if (readyQuantitySavePromises.get(saveKey)) readyQuantitySavePromises.delete(saveKey);
