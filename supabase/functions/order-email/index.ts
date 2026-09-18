@@ -32,6 +32,7 @@ import {
   esc, fmtDate,
   type Brand,
 } from './template.ts';
+import { cleanEmail, cleanEmails } from './email-address.ts';
 
 const SMTP_HOST = Deno.env.get('SMTP_HOST') ?? 'smtp.gmail.com';
 const SMTP_PORT = Number(Deno.env.get('SMTP_PORT') ?? '465');
@@ -83,11 +84,14 @@ async function closeSmtp() {
 type Attachment = { filename: string; content: string };
 
 async function sendMail(to: string[], subject: string, html: string, attachments: Attachment[] = []) {
-  if (!to.length) return { skipped: true };
+  // Last line of defence: never let raw database or request values reach
+  // nodemailer, which may encode direction controls as an invalid IDN domain.
+  const recipients = cleanEmails(to);
+  if (!recipients.length) return { skipped: true };
 
   const info = await smtp().sendMail({
     from: MAIL_FROM,
-    to,
+    to: recipients,
     subject,
     html,
     // גרסת טקסט למי שחוסם HTML, ולסינון ספאם טוב יותר.
@@ -101,7 +105,7 @@ async function sendMail(to: string[], subject: string, html: string, attachments
     })),
   });
 
-  return { ok: true, to, messageId: info?.messageId };
+  return { ok: true, to: recipients, messageId: info?.messageId };
 }
 
 // גרסת טקסט פשוטה: מסירה תגים ומכווצת רווחים. לא מנסה להיות
@@ -117,23 +121,6 @@ function htmlToText(html: string) {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-function cleanEmail(value: unknown) {
-  if (typeof value !== 'string') return null;
-  const email = value.normalize('NFKC')
-    .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '')
-    .trim()
-    .toLowerCase();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
-}
-
-function cleanEmails(values: unknown) {
-  const list = Array.isArray(values) ? values : [values];
-  return [...new Set(list
-    .map(cleanEmail)
-    .filter((email): email is string => !!email)
-  )];
 }
 
 // ============================================================
@@ -178,7 +165,8 @@ Deno.serve(async (req) => {
         return json({ ok: false, error: 'מייל בדיקה מותר למנהל בלבד' }, 403);
       }
 
-      if (!to) return json({ ok: false, error: 'חסרה כתובת יעד לבדיקה' }, 400);
+      const testEmail = cleanEmail(to);
+      if (!testEmail) return json({ ok: false, error: 'כתובת היעד אינה תקינה' }, 400);
       const html = shell('בדיקת שליחה', '#047857', `
         <p style="margin:0 0 14px;font-size:17px;font-weight:bold;">ה-SMTP עובד ✅</p>
         <p style="margin:0 0 14px;">אם הגעת עד כאן, מערכת ההזמנות יכולה לשלוח מיילים.</p>
@@ -196,8 +184,8 @@ Deno.serve(async (req) => {
         ], { showPrice: true })}
       `, brand);
 
-      await sendMail([to], `בדיקת מערכת ההזמנות — ${brand.name}`, html);
-      return json({ ok: true, sent: [to] });
+      await sendMail([testEmail], `בדיקת מערכת ההזמנות — ${brand.name}`, html);
+      return json({ ok: true, sent: [testEmail] });
     }
 
     if (!order_id) return json({ ok: false, error: 'order_id נדרש' }, 400);
