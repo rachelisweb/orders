@@ -42,6 +42,7 @@ let realtimeRefreshQueued = false;
 let realtimePanelOrderId = null;
 const futureOrderMutations = new Set();
 const readyQuantityEditOrders = new Set();
+const readyQuantitySavePromises = new Map();
 const LOCAL_REVIEW = new URLSearchParams(location.search).get('review') === '1';
 const MOCK_REVIEW = LOCAL_REVIEW
   && ['localhost', '127.0.0.1'].includes(location.hostname)
@@ -434,11 +435,18 @@ function scheduleRealtimeRefresh(payload) {
 
 async function runRealtimeRefresh() {
   if (realtimeRefreshRunning || document.hidden) return;
-  realtimeRefreshRunning = true;
-  realtimeRefreshQueued = false;
-
   const overlay = $('orderOverlay');
   const orderId = overlay?.classList.contains('active') ? overlay.dataset.orderId : null;
+  // Each saved quantity emits realtime events. While editing a ready order, a
+  // full reload would replace the focused inputs and make values jump/reset.
+  // The explicit "finish editing" action performs one consolidated refresh.
+  if (orderId && readyQuantityEditOrders.has(orderId)) {
+    realtimeRefreshQueued = false;
+    return;
+  }
+
+  realtimeRefreshRunning = true;
+  realtimeRefreshQueued = false;
   const editorFocused = !!overlay?.querySelector('input:focus, textarea:focus, select:focus, [contenteditable="true"]:focus');
 
   try {
@@ -1803,7 +1811,7 @@ function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels
         </div>
         <div class="admin-order-model-name">
           <div class="bold">${esc(group.model)}</div>
-          <div class="small muted">${fmtNum(units)} יח׳</div>
+          <div class="small muted" data-order-model-units>${fmtNum(units)} יח׳</div>
         </div>
         <div class="admin-order-sizes">
           ${group.lines.map((line) => {
@@ -1976,7 +1984,7 @@ function openOrder(id) {
   if (quantityEditable) {
     $('orderPanelBody').onchange = async (e) => {
       const inp = e.target.closest('[data-item]');
-      if (inp) await editItem(inp.dataset.item, parseInt(inp.value, 10), o.id);
+      if (inp) await editItem(inp.dataset.item, parseInt(inp.value, 10), o.id, inp);
     };
   } else {
     $('orderPanelBody').onchange = null;
@@ -2114,22 +2122,59 @@ function wireOrderPanel(o, sub) {
   });
 }
 
-async function editItem(itemId, qty, orderId) {
+async function editItem(itemId, qty, orderId, input = null) {
+  const order = db.orders.find((item) => item.id === orderId);
+  const readyQuantityEdit = order?.status === 'ready' && readyQuantityEditOrders.has(orderId);
+  const line = order?.order_items?.find((item) => String(item.id) === String(itemId));
+  const previousQty = Number(line?.qty || 0);
+  const normalizedQty = Number.isFinite(qty) && qty >= 0 ? Math.floor(qty) : 0;
+  const saveKey = `${orderId}:${itemId}`;
+
+  if (input) {
+    input.disabled = true;
+    input.setAttribute('aria-busy', 'true');
+  }
+
   try {
-    const order = db.orders.find((item) => item.id === orderId);
     const rpc = order?.status === 'ready' ? 'edit_ready_order_item' : 'edit_order_item';
-    const { data, error } = await sb.rpc(rpc, {
-      p_item_id: Number(itemId), p_qty: Number.isFinite(qty) ? qty : 0,
+    const savePromise = sb.rpc(rpc, {
+      p_item_id: Number(itemId), p_qty: normalizedQty,
     });
+    if (readyQuantityEdit) readyQuantitySavePromises.set(saveKey, savePromise);
+    const { data, error } = await savePromise;
     if (error) throw error;
-    toast(qty > 0 ? 'הכמות עודכנה' : 'הכמות נשמרה כ־0');
+    toast(normalizedQty > 0 ? 'הכמות עודכנה' : 'הכמות נשמרה כ־0');
+
+    if (readyQuantityEdit) {
+      if (line) line.qty = normalizedQty;
+      if (input) {
+        input.value = String(normalizedQty);
+        input.classList.toggle('on', normalizedQty > 0);
+        const group = input.closest('.admin-order-model');
+        const modelUnits = group?.querySelector('[data-order-model-units]');
+        if (modelUnits && line) {
+          const units = order.order_items
+            .filter((item) => item.model === line.model)
+            .reduce((sum, item) => sum + Number(item.qty || 0), 0);
+          modelUnits.textContent = `${fmtNum(units)} יח׳`;
+        }
+      }
+      return;
+    }
 
     await loadAll();
     if (data?.lines_left > 0) openOrder(orderId);
     else { $('orderOverlay').classList.remove('active'); toast('ההזמנה נותרה ללא פריטים', true); }
   } catch (err) {
     toast(friendlyError(err), true);
-    openOrder(orderId);
+    if (readyQuantityEdit && input) input.value = String(previousQty);
+    else openOrder(orderId);
+  } finally {
+    if (readyQuantitySavePromises.get(saveKey)) readyQuantitySavePromises.delete(saveKey);
+    if (input?.isConnected) {
+      input.disabled = false;
+      input.removeAttribute('aria-busy');
+    }
   }
 }
 
@@ -3180,7 +3225,6 @@ function renderStock() {
         </div>
         <div class="stock-product-meta">
           <span><span class="muted">סה״כ:</span> <b data-stock-total="${p.id}">${fmtNum(p.total)}</b></span>
-          <span><span class="muted">מספר ברקוד:</span> ${esc(p.barcode || '')}</span>
           <span><span class="muted">עלות:</span> ${p.cost_price > 0 ? fmtMoney(p.cost_price) : '<span class="chip amber">חסר</span>'}</span>
           <span><span class="muted">סיטונאי:</span> ${p.wholesale_price > 0 ? fmtMoney(p.wholesale_price) : '—'}</span>
           <span><span class="muted">קמעונאי:</span> ${p.retail_price > 0 ? fmtMoney(p.retail_price) : '—'}</span>
@@ -3400,9 +3444,6 @@ function editProduct(id) {
         `<option value="${c.id}" ${p?.collection_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
     <div class="field"><label>תיאור קצר</label>
       <textarea id="pDesc" rows="2" placeholder="חומר, גזרה, פרטים…">${esc(p?.description || '')}</textarea></div>
-    <div class="field"><label>מספר ברקוד</label>
-      <input type="text" id="pBarcode" value="${esc(p?.barcode || '')}" maxlength="100"
-        inputmode="numeric" autocomplete="off" placeholder="אופציונלי — יוצג במסמכים שיופקו"></div>
     <div class="field"><label>תמונה</label>
       <div class="product-image-source">
         <input type="text" id="pImage" value="${esc(p?.image_url || '')}" placeholder="הדבקת קישור לתמונה…">
@@ -3524,7 +3565,6 @@ function editProduct(id) {
       model,
       collection_id: $('pCollection').value,
       description: $('pDesc').value.trim() || null,
-      barcode: $('pBarcode').value.trim() || null,
       image_url:   $('pImage').value.trim() || null,
       cost_price:      Number($('pCost').value) || 0,
       wholesale_price: Number($('pWholesale').value) || 0,
@@ -4708,11 +4748,10 @@ async function openIcountInvoicePreview(orderId) {
       ${blockers.length ? `<div class="note danger-note small"><b>לא ניתן להפיק:</b> ${blockers.map(esc).join(' · ')}</div>` : ''}
       ${warnings.length ? `<div class="note warn small"><b>יש לבדוק:</b> ${warnings.map(esc).join(' · ')}</div>` : ''}
       <div class="table-wrap"><table><thead><tr>
-        <th>דגם ופירוט</th><th>ברקוד</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
+        <th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
       </tr></thead><tbody>
         ${p.items.map((x) => `<tr>
           <td><b>${esc(x.model)}</b>${x.description ? `<div class="small muted">${esc(x.description)}</div>` : ''}</td>
-          <td>${x.barcode ? esc(x.barcode) : '<span class="faint">—</span>'}</td>
           <td class="num">${fmtNum(x.quantity)}</td>
           <td class="num">${fmtMoney(x.unit_price)}</td>
           <td class="num">${fmtMoney(x.quantity * x.unit_price)}</td>
@@ -6288,7 +6327,15 @@ function wire() {
     if (readyQtyEdit) {
       const orderId = readyQtyEdit.dataset.readyQtyEdit;
       if (readyQuantityEditOrders.has(orderId)) {
+        readyQtyEdit.disabled = true;
+        const pendingSaves = [...readyQuantitySavePromises.entries()]
+          .filter(([key]) => key.startsWith(`${orderId}:`))
+          .map(([, promise]) => promise);
+        if (pendingSaves.length) await Promise.allSettled(pendingSaves);
         readyQuantityEditOrders.delete(orderId);
+        clearTimeout(realtimeRefreshTimer);
+        realtimeRefreshQueued = false;
+        await loadAll();
         openOrder(orderId);
       } else if (confirm('האם אתה בטוח שברצונך לשנות כמויות סופיות?')) {
         readyQuantityEditOrders.add(orderId);
