@@ -433,15 +433,56 @@ function scheduleRealtimeRefresh(payload) {
   realtimeRefreshTimer = setTimeout(runRealtimeRefresh, 400);
 }
 
+function orderLineIsOutOfStock(line) {
+  if (Number(line?.qty || 0) <= 0) return false;
+  const product = productByModel(line.model);
+  return Number(product?.stock?.[line.size] ?? 0) <= 0;
+}
+
+function refreshOpenOrderStockWarnings(orderId) {
+  const order = db.orders.find((item) => item.id === orderId);
+  if (!order) return;
+  const lines = new Map((order.order_items || []).map((line) => [String(line.id), line]));
+  document.querySelectorAll('#orderPanelBody [data-order-item]').forEach((row) => {
+    const warning = row.querySelector('[data-stock-out]');
+    const line = lines.get(row.dataset.orderItem);
+    if (warning) warning.hidden = !orderLineIsOutOfStock(line);
+  });
+}
+
+async function refreshOpenOrderInventory(orderId) {
+  const order = db.orders.find((item) => item.id === orderId);
+  const productIds = [...new Set((order?.order_items || []).map((line) => line.product_id).filter(Boolean))];
+  if (!productIds.length) return;
+  const { data, error } = await sb.from('products').select('id, inventory(size, qty)').in('id', productIds);
+  if (error) throw error;
+  for (const row of data || []) {
+    const product = db.products.find((item) => item.id === row.id);
+    if (!product) continue;
+    product.stock = Object.fromEntries((row.inventory || []).map((item) => [item.size, Number(item.qty || 0)]));
+    product.total = (row.inventory || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  }
+  refreshOpenOrderStockWarnings(orderId);
+}
+
 async function runRealtimeRefresh() {
   if (realtimeRefreshRunning || document.hidden) return;
   const overlay = $('orderOverlay');
   const orderId = overlay?.classList.contains('active') ? overlay.dataset.orderId : null;
-  // Each saved quantity emits realtime events. While editing a ready order, a
-  // full reload would replace the focused inputs and make values jump/reset.
-  // The explicit "finish editing" action performs one consolidated refresh.
+  // Each saved quantity emits realtime events. While editing a ready order,
+  // refresh only its inventory snapshot: warnings stay live without replacing
+  // focused inputs. "Finish editing" still performs one consolidated reload.
   if (orderId && readyQuantityEditOrders.has(orderId)) {
+    realtimeRefreshRunning = true;
     realtimeRefreshQueued = false;
+    try {
+      await refreshOpenOrderInventory(orderId);
+    } catch (error) {
+      console.warn('Inventory-only realtime refresh failed', error);
+    } finally {
+      realtimeRefreshRunning = false;
+      if (realtimeRefreshQueued) scheduleRealtimeRefresh();
+    }
     return;
   }
 
@@ -452,6 +493,7 @@ async function runRealtimeRefresh() {
   try {
     await loadAll();
     if (orderId && db.orders.some((order) => order.id === orderId)) {
+      refreshOpenOrderStockWarnings(orderId);
       if (editorFocused) realtimePanelOrderId = orderId;
       else openOrder(orderId);
     }
@@ -1817,7 +1859,8 @@ function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels
           ${group.lines.map((line) => {
             const ordered = line.qty_ordered ?? line.qty;
             const short = ordered !== line.qty;
-            return `<div class="admin-order-size ${short ? 'short' : ''}">
+            const outOfStock = orderLineIsOutOfStock(line);
+            return `<div class="admin-order-size ${short ? 'short' : ''}" data-order-item="${line.id}">
               <span class="admin-order-size-label">${esc(line.size)}</span>
               <div class="admin-order-size-qty">
                 ${short ? `<span class="small qty-diff">הוזמן ${fmtNum(ordered)}</span>` : ''}
@@ -1825,6 +1868,7 @@ function renderAdminOrderItems(groups, quantityEditable, anyShort, checkedModels
                   ? `<input type="number" min="0" value="${line.qty}" data-item="${line.id}"
                        aria-label="כמות דגם ${esc(line.model)} מידה ${esc(line.size)}">`
                   : `<b>${short ? 'סופק ' : '×'}${fmtNum(line.qty)}</b>`}
+                <span class="order-stock-out" data-stock-out ${outOfStock ? '' : 'hidden'}>אזל מהמלאי</span>
               </div>
             </div>`;
           }).join('')}
@@ -2147,6 +2191,13 @@ async function editItem(itemId, qty, orderId, input = null) {
 
     if (readyQuantityEdit) {
       if (line) line.qty = normalizedQty;
+      const product = line ? productByModel(line.model) : null;
+      const inventoryDelta = Number(data?.inventory_delta || 0);
+      if (product && inventoryDelta) {
+        product.stock[line.size] = Number(product.stock?.[line.size] || 0) + inventoryDelta;
+        product.availableStock[line.size] = Number(product.availableStock?.[line.size] || 0) + inventoryDelta;
+        product.total = Number(product.total || 0) + inventoryDelta;
+      }
       if (input) {
         input.value = String(normalizedQty);
         input.classList.toggle('on', normalizedQty > 0);
@@ -2158,6 +2209,8 @@ async function editItem(itemId, qty, orderId, input = null) {
             .reduce((sum, item) => sum + Number(item.qty || 0), 0);
           modelUnits.textContent = `${fmtNum(units)} יח׳`;
         }
+        const stockWarning = input.closest('.admin-order-size')?.querySelector('[data-stock-out]');
+        if (stockWarning) stockWarning.hidden = !orderLineIsOutOfStock(line);
       }
       return;
     }

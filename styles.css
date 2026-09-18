@@ -688,6 +688,11 @@ tfoot td { padding: .6rem .7rem; background: var(--surface-3); font-weight: 800;
   font-size: .7rem; font-weight: 800;
 }
 .admin-order-size-qty { display: flex; flex-direction: column; align-items: center; gap: .15rem; }
+.order-stock-out {
+  color: var(--danger); font-size: .64rem; font-weight: 800;
+  line-height: 1.1; white-space: nowrap;
+}
+.order-stock-out[hidden] { display: none; }
 .admin-order-size-qty input {
   width: 50px; min-height: var(--tap); height: var(--tap);
   padding: 0; text-align: center; font-weight: 800;
