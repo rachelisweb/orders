@@ -1454,6 +1454,8 @@ tr.short td, tr.short { background: #fffbeb; }
 .return-model-card.defective { background: #fffbeb; border-color: #fcd34d; }
 .return-model-notes, .return-photo-strip { grid-column: 2 / -1; }
 .return-photo-strip { display: flex; gap: .4rem; flex-wrap: wrap; }
+.return-discount-status { min-width: 92px; }
+.return-discount-status.danger-text { color: var(--danger); font-weight: 700; }
 
 @media (max-width: 520px) {
   .return-model-picker { align-items: stretch; }

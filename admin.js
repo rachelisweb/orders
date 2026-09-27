@@ -3877,7 +3877,7 @@ function openReturn(id) {
         <div><span class="muted">מהן פגומות:</span> <b>${fmtNum(r.damaged_units)}</b></div>
         <div><span class="muted">נקלטה:</span> ${fmtDate(r.created_at)}</div>
         <div><span class="muted">זוכתה:</span> ${r.credited_at ? fmtDate(r.credited_at) : '—'}</div>
-        <div><span class="muted">הנחה בזיכוי:</span> <b>${returnDiscountLabel(r)}</b></div>
+        <div><span class="muted">הנחה בזיכוי:</span> <b data-return-discount-label>${returnDiscountLabel(r)}</b></div>
       </div>
       ${r.notes ? `<div class="small" style="margin-top:.5rem"><span class="muted">הערה:</span> ${esc(r.notes)}</div>` : ''}
     </div>
@@ -3892,7 +3892,7 @@ function openReturn(id) {
         <input type="number" id="retDiscValue" min="0" step="0.5" inputmode="decimal"
                value="${returnDiscountValue(r) > 0 ? returnDiscountValue(r) : ''}" placeholder="0"
                aria-label="שיעור או סכום ההנחה בזיכוי">
-        <button class="btn sm" id="retDiscSave">שמירת הנחה</button>
+        <span class="small muted return-discount-status" id="retDiscStatus" aria-live="polite">נשמר אוטומטית</span>
       </div>` : ''}
 
     <h4 class="bold" style="margin-bottom:.5rem">פריטים (${fmtNum(r.total_units)} יח׳)</h4>
@@ -3935,31 +3935,49 @@ function wireReturnDiscount(row) {
   const segment = $('retDiscSeg');
   if (!segment) return;
   let type = returnDiscountType(row) === 'amt' ? 'amt' : 'pct';
-  segment.onclick = (event) => {
-    const button = event.target.closest('[data-ret-dtype]');
-    if (!button) return;
-    type = button.dataset.retDtype;
-    $$('#retDiscSeg button').forEach((item) => item.classList.toggle('on', item === button));
-  };
-  on('retDiscSave', 'click', async () => {
+  let saveVersion = 0;
+  const persist = async () => {
+    const version = ++saveVersion;
     const value = Number($('retDiscValue').value || 0);
-    if (!Number.isFinite(value) || value < 0) { toast('ערך ההנחה אינו תקין', true); return; }
-    if (type === 'pct' && value > 100) { toast('אחוז הנחה לא יכול לעבור 100', true); return; }
-    const button = $('retDiscSave');
-    button.disabled = true;
+    const status = $('retDiscStatus');
+    if (!Number.isFinite(value) || value < 0) { status.textContent = 'ערך לא תקין'; status.classList.add('danger-text'); return; }
+    if (type === 'pct' && value > 100) { status.textContent = 'אחוז עד 100'; status.classList.add('danger-text'); return; }
+    status.classList.remove('danger-text');
+    status.textContent = 'שומר…';
     try {
       const { error } = await sb.rpc('set_return_discount_v2', {
         p_return_id: row.id, p_type: value > 0 ? type : null, p_value: value,
       });
       if (error) throw error;
-      toast(value > 0 ? `הנחת הזיכוי נשמרה: ${type === 'amt' ? fmtMoney(value) : `${fmtNum(value)}%`}` : 'הנחת הזיכוי בוטלה');
-      await loadAll();
-      openReturn(row.id);
+      if (version !== saveVersion) return;
+      row.discount_type = value > 0 ? type : null;
+      row.discount_value = value;
+      row.discount_pct = value > 0 && type === 'pct' ? value : 0;
+      const label = document.querySelector('#orderPanelBody [data-return-discount-label]');
+      if (label) label.textContent = returnDiscountLabel(row);
+      status.textContent = '✓ נשמר';
     } catch (error) {
+      if (version !== saveVersion) return;
+      status.textContent = 'השמירה נכשלה';
+      status.classList.add('danger-text');
       toast(friendlyError(error), true);
-      button.disabled = false;
     }
+  };
+  const scheduleSave = debounce(persist, 650);
+  segment.onclick = (event) => {
+    const button = event.target.closest('[data-ret-dtype]');
+    if (!button) return;
+    type = button.dataset.retDtype;
+    $$('#retDiscSeg button').forEach((item) => item.classList.toggle('on', item === button));
+    scheduleSave();
+  };
+  on('retDiscValue', 'input', () => {
+    const status = $('retDiscStatus');
+    status.classList.remove('danger-text');
+    status.textContent = 'ממתין לשמירה…';
+    scheduleSave();
   });
+  on('retDiscValue', 'change', scheduleSave);
 }
 
 async function creditReturn(id) {
