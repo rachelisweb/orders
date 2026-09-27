@@ -223,7 +223,7 @@ async function loadAll() {
         sb.from('profiles').select('*, customers(name)').order('created_at', { ascending: false }),
         sb.from('notification_emails').select('*').order('email'),
         sb.from('app_settings').select('*'),
-        sb.from('v_returns').select('*').order('return_date', { ascending: false }),
+        sb.from('returns').select('*, customers(name, business_name)').order('return_date', { ascending: false }),
         sb.from('return_items').select('*'),
         sb.from('order_admin_notes').select('*'),
         sb.from('future_order_collections').select('*'),
@@ -256,8 +256,17 @@ async function loadAll() {
     db.users     = users.data || [];
     db.emails    = emails.data || [];
     db.settings  = Object.fromEntries((settings.data || []).map((s) => [s.key, s.value]));
-    db.returns   = rets.data || [];
     db.returnItems = retItems.data || [];
+    db.returns   = (rets.data || []).map((ret) => {
+      const items = db.returnItems.filter((item) => item.return_id === ret.id);
+      return {
+        ...ret,
+        customer_name: ret.customers?.business_name || ret.customers?.name || null,
+        total_units: items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
+        damaged_units: items.filter((item) => item.is_defective)
+          .reduce((sum, item) => sum + Number(item.qty || 0), 0),
+      };
+    });
     db.orderNotes  = Object.fromEntries((notes.data || []).map((n) => [n.order_id, n.notes || '']));
     db.futureCollections = futureCols.data || [];
     db.demandCustomerOrders = Object.fromEntries(
@@ -3736,6 +3745,52 @@ const returnItemsOf = (id) => db.returnItems.filter((i) => i.return_id === id);
 const refundInvoice = (returnId) => db.invoices.find((invoice) =>
   invoice.return_id === returnId && invoice.status !== 'cancelled' && invoice.external_doctype === 'refund') || null;
 
+function groupedReturnItems(items, defective) {
+  const groups = new Map();
+  for (const item of items.filter((row) => !!row.is_defective === defective)) {
+    const model = item.model || 'ללא דגם';
+    if (!groups.has(model)) groups.set(model, { model, sizes: {}, photos: [], notes: [] });
+    const group = groups.get(model);
+    const size = item.size || 'ללא מידה';
+    group.sizes[size] = (group.sizes[size] || 0) + Number(item.qty || 0);
+    if (item.photo_url && !group.photos.includes(item.photo_url)) group.photos.push(item.photo_url);
+    if (item.notes && !group.notes.includes(item.notes)) group.notes.push(item.notes);
+  }
+  return [...groups.values()].sort((a, b) => a.model.localeCompare(b.model, 'he'));
+}
+
+function returnModelCards(groups, defective) {
+  if (!groups.length) return `<div class="empty">${defective ? 'אין פריטים פגומים' : 'אין פריטים תקינים'}</div>`;
+  return `<div class="return-model-list">${groups.map((group) => {
+    const product = productByModel(group.model);
+    const units = Object.values(group.sizes).reduce((sum, qty) => sum + qty, 0);
+    return `<div class="admin-order-model return-model-card ${defective ? 'defective' : ''}">
+      <div class="admin-order-model-image">
+        ${product?.image_url
+          ? `<img src="${esc(img(product.image_url, 180))}" alt="דגם ${esc(group.model)}" loading="lazy">`
+          : group.photos[0]
+            ? `<img src="${esc(group.photos[0])}" alt="תמונת פריט פגום" data-zoom-img="${esc(group.photos[0])}" loading="lazy">`
+            : '<div class="img-ph">📷</div>'}
+      </div>
+      <div class="admin-order-model-name">
+        <div class="bold">${esc(group.model)}</div>
+        <div class="small muted">${fmtNum(units)} יח׳</div>
+        ${defective ? '<span class="chip amber">פגום</span>' : '<span class="chip green">נכנס למלאי</span>'}
+      </div>
+      <div class="admin-order-sizes">
+        ${Object.entries(group.sizes).sort(([a], [b]) => sortSizes(a, b)).map(([size, qty]) => `
+          <div class="admin-order-size">
+            <span class="admin-order-size-label">${esc(size)}</span>
+            <div class="admin-order-size-qty"><b>×${fmtNum(qty)}</b></div>
+          </div>`).join('')}
+      </div>
+      ${group.notes.length ? `<div class="return-model-notes small muted">${esc(group.notes.join(' · '))}</div>` : ''}
+      ${group.photos.length > 1 ? `<div class="return-photo-strip">${group.photos.map((url) =>
+        `<img class="ret-preview" src="${esc(url)}" alt="תמונת פגם" data-zoom-img="${esc(url)}" loading="lazy">`).join('')}</div>` : ''}
+    </div>`;
+  }).join('')}</div>`;
+}
+
 function renderReturns() {
   const buckets = { pending: [], credited: [] };
   for (const r of db.returns) (buckets[r.status] || (buckets[r.status] = [])).push(r);
@@ -3795,6 +3850,8 @@ function openReturn(id) {
   if (!r) return;
   const items = returnItemsOf(id);
   const refund = refundInvoice(id);
+  const goodGroups = groupedReturnItems(items, false);
+  const damagedGroups = groupedReturnItems(items, true);
 
   $('orderPanelTitle').textContent = `חזרה #${r.return_number}`;
   $('orderPanelBody').onchange = null;
@@ -3812,30 +3869,19 @@ function openReturn(id) {
         <div><span class="muted">מהן פגומות:</span> <b>${fmtNum(r.damaged_units)}</b></div>
         <div><span class="muted">נקלטה:</span> ${fmtDate(r.created_at)}</div>
         <div><span class="muted">זוכתה:</span> ${r.credited_at ? fmtDate(r.credited_at) : '—'}</div>
+        <div><span class="muted">הנחה בזיכוי:</span> <b>${fmtNum(Number(r.discount_pct || 0))}%</b></div>
       </div>
       ${r.notes ? `<div class="small" style="margin-top:.5rem"><span class="muted">הערה:</span> ${esc(r.notes)}</div>` : ''}
     </div>
 
-    <h4 class="bold" style="margin-bottom:.5rem">פריטים (${items.length})</h4>
+    <h4 class="bold" style="margin-bottom:.5rem">פריטים (${fmtNum(r.total_units)} יח׳)</h4>
     <div class="note small">פריטים תקינים כבר נוספו למלאי בזמן הקליטה. פגומים לא נכנסו.</div>
-    <div class="table-wrap">
-      <table class="responsive"><thead><tr>
-        <th></th><th>דגם</th><th>מידה</th><th class="num">כמות</th><th>מצב</th><th>הערה</th>
-      </tr></thead><tbody>
-      ${items.map((i) => `<tr>
-        ${td('', i.photo_url
-          ? `<img class="ret-preview" src="${esc(i.photo_url)}" alt="תמונת הפריט" data-zoom-img="${esc(i.photo_url)}" loading="lazy">`
-          : '<span class="faint">—</span>')}
-        ${td('דגם', esc(i.model || '—'), 'bold')}
-        ${td('מידה', esc(i.size || '—'))}
-        ${td('כמות', fmtNum(i.qty), 'num')}
-        ${td('מצב', i.is_defective
-          ? '<span class="chip amber">פגום</span>'
-          : '<span class="chip green">נכנס למלאי</span>')}
-        ${td('הערה', esc(i.notes || '—'), 'small muted')}
-      </tr>`).join('')}
-      </tbody></table>
+    <div class="tabs return-detail-tabs">
+      <button class="tab active" data-return-detail="good">✅ תקינים <span class="tab-count">${goodGroups.length}</span></button>
+      <button class="tab" data-return-detail="damaged">⚠️ פגומים <span class="tab-count">${damagedGroups.length}</span></button>
     </div>
+    <div data-return-detail-panel="good">${returnModelCards(goodGroups, false)}</div>
+    <div data-return-detail-panel="damaged" hidden>${returnModelCards(damagedGroups, true)}</div>
     <h4 class="bold" style="margin:.9rem 0 .5rem">מסמכים (${refund ? 1 : 0})</h4>
     ${refund ? `<div class="row small" style="padding:.4rem 0;border-bottom:1px solid var(--border)">
       <button class="invoice-file-link" data-dl="${esc(refund.file_path)}"
@@ -3853,6 +3899,14 @@ function openReturn(id) {
     </div>`;
 
   $('orderOverlay').classList.add('active');
+  $('orderPanelBody').onclick = (event) => {
+    const tab = event.target.closest('[data-return-detail]');
+    if (tab) {
+      const selected = tab.dataset.returnDetail;
+      $$('#orderPanelBody [data-return-detail]').forEach((button) => button.classList.toggle('active', button === tab));
+      $$('#orderPanelBody [data-return-detail-panel]').forEach((panel) => { panel.hidden = panel.dataset.returnDetailPanel !== selected; });
+    }
+  };
 }
 
 async function creditReturn(id) {
@@ -3916,19 +3970,25 @@ function newReturn() {
       </div>
       <div class="field"><label for="rtDate">תאריך <span class="req">*</span></label>
         <input type="date" id="rtDate" value="${todayISO()}"></div>
+      <div class="field"><label for="rtDiscount">אחוז הנחה בזיכוי</label>
+        <input type="number" id="rtDiscount" min="0" max="100" step="0.5" inputmode="decimal" value="0">
+        <div class="hint">מתעדכן אוטומטית לפי כרטיס הלקוח וניתן לשינוי</div>
+      </div>
     </div>
 
     <div class="field"><label for="rtNotes">הערה (אופציונלי)</label>
       <input type="text" id="rtNotes" placeholder="לדוגמה: הוחזר עם השליח"></div>
 
-    <h4 class="bold" style="margin:.4rem 0 .5rem">פריטים</h4>
+    <h4 class="bold" style="margin:.4rem 0 .5rem">דגמים שהוחזרו</h4>
     <div class="note small">
-      הקלד מספר דגם — תיפתח רשימה של הדגמים הקיימים. הפריטים ייכנסו
-      למלאי הכללי ויתווספו לדגם הקיים. פריט שמסומן <b>פגום</b> לא נכנס למלאי,
-      ואז אפשר להסתפק בתמונה מהמצלמה במקום מספר דגם.
+      לכל דגם אפשר למלא כמויות בכל המידות. חלונית שמסומנת <b>פגום</b>
+      תישמר בנפרד ולא תיכנס למלאי.
+    </div>
+    <div class="return-model-picker">
+      <input type="text" id="rtAddModel" list="rtModels" autocomplete="off" placeholder="הקלדת מספר דגם…">
+      <button class="btn" id="rtAdd">➕ הוספת דגם</button>
     </div>
     <div id="rtLines"></div>
-    <button class="btn ghost sm" id="rtAdd" style="margin-bottom:1rem">➕ עוד פריט</button>
 
     <datalist id="rtModels">
       ${db.products.map((p) => `<option value="${esc(p.model)}">${esc(p.collections?.name || '')}</option>`).join('')}
@@ -3941,24 +4001,39 @@ function newReturn() {
     </div>
   `);
 
-  addRetLine();
-  on('rtAdd', 'click', () => addRetLine());
+  on('rtName', 'change', () => {
+    const name = $('rtName').value.trim().toLowerCase();
+    const customer = db.customers.find((c) =>
+      (c.business_name || '').toLowerCase() === name || (c.name || '').toLowerCase() === name);
+    if (customer) $('rtDiscount').value = Number(customer.price_at_cost ? 0 : customer.discount_pct || 0);
+  });
+  on('rtAdd', 'click', () => addRetLine($('rtAddModel').value));
+  on('rtAddModel', 'keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); addRetLine(event.currentTarget.value); }
+  });
   on('rtSave', 'click', saveReturn);
+  renderRetLines();
 }
 
-function addRetLine() {
+function addRetLine(rawModel = '') {
+  const product = db.products.find((item) => item.model.toLowerCase() === rawModel.trim().toLowerCase());
+  if (!product) { toast('יש לבחור דגם קיים מהרשימה', true); return; }
+  const existing = retLines.find((line) => line.model === product.model && !line.defective);
+  if (existing) { toast(`דגם ${product.model} כבר נמצא בחזרה`); return; }
   retLines.push({
-    key: ++retSeq, model: '', size: '', qty: 1,
+    key: ++retSeq, model: product.model, sizes: {},
     defective: false, photo: null, previewUrl: null, notes: '',
   });
+  if ($('rtAddModel')) $('rtAddModel').value = '';
   renderRetLines();
 }
 
 function updateRetSummary() {
   const el = $('rtSummary');
   if (!el) return;
-  const units = retLines.reduce((a, l) => a + (Number(l.qty) || 0), 0);
-  const bad   = retLines.filter((l) => l.defective).reduce((a, l) => a + (Number(l.qty) || 0), 0);
+  const lineUnits = (line) => Object.values(line.sizes || {}).reduce((sum, qty) => sum + (Number(qty) || 0), 0);
+  const units = retLines.reduce((sum, line) => sum + lineUnits(line), 0);
+  const bad   = retLines.filter((line) => line.defective).reduce((sum, line) => sum + lineUnits(line), 0);
   el.textContent = `${fmtNum(units)} יחידות · ${fmtNum(units - bad)} למלאי · ${fmtNum(bad)} פגומות`;
 }
 
@@ -3966,31 +4041,24 @@ function renderRetLines() {
   const box = $('rtLines');
   if (!box) return;
 
-  box.innerHTML = retLines.map((l) => `
-    <div class="ret-line ${l.defective ? 'defective' : ''}" data-key="${l.key}">
-      <div class="ret-top">
-        <div class="grow">
-          <div class="ret-grid">
-            <div class="field">
-              <label>דגם ${l.defective ? '' : '<span class="req">*</span>'}</label>
-              <input type="text" list="rtModels" data-f="model" value="${esc(l.model)}"
-                     autocomplete="off" inputmode="text" placeholder="מספר דגם…">
-            </div>
-            <div class="field"><label>מידה ${l.defective ? '' : '<span class="req">*</span>'}</label>
-              <select data-f="size">
-                <option value="">—</option>
-                ${SIZES.map((s) => `<option value="${s}" ${l.size === s ? 'selected' : ''}>${s}</option>`).join('')}
-              </select>
-            </div>
-            <div class="field"><label>כמות</label>
-              <input type="number" data-f="qty" min="1" value="${l.qty}" inputmode="numeric"
-                     style="text-align:center;font-weight:800">
-            </div>
-          </div>
-        </div>
-        ${retLines.length > 1
-          ? `<button class="btn ghost sm" data-rm-line="${l.key}" aria-label="הסרת השורה" style="margin-top:1.4rem">🗑️</button>`
-          : ''}
+  box.innerHTML = retLines.length ? retLines.map((l) => {
+    const product = productByModel(l.model);
+    return `
+    <div class="ret-line return-entry-card ${l.defective ? 'defective' : ''}" data-key="${l.key}">
+      <div class="return-entry-head">
+        <div class="return-entry-image">${product?.image_url
+          ? `<img src="${esc(img(product.image_url, 180))}" alt="דגם ${esc(l.model)}" loading="lazy">`
+          : '<div class="img-ph">📷</div>'}</div>
+        <div class="grow"><div class="bold">דגם ${esc(l.model)}</div>${product?.description ? `<div class="small muted">${esc(product.description)}</div>` : ''}</div>
+        <button class="btn ghost sm" data-rm-line="${l.key}" aria-label="הסרת הדגם">🗑️</button>
+      </div>
+      <div class="sizes return-entry-sizes">
+        ${SIZES.map((size) => `<label class="size">
+          <span class="lbl">${esc(size)}</span>
+          <input type="number" min="0" inputmode="numeric" placeholder="0" value="${l.sizes[size] || ''}"
+                 class="${l.sizes[size] > 0 ? 'on' : ''}" data-return-size="${esc(size)}"
+                 aria-label="דגם ${esc(l.model)} מידה ${esc(size)}">
+        </label>`).join('')}
       </div>
 
       <div class="ret-flags">
@@ -4011,23 +4079,35 @@ function renderRetLines() {
                </label>
                <span class="small muted">נדחס אוטומטית לפני ההעלאה</span>`}
         </div>` : ''}
-    </div>`).join('');
+    </div>`;
+  }).join('') : '<div class="empty return-empty">יש להוסיף דגם כדי להתחיל</div>';
 
   updateRetSummary();
 
   // רק שדות טקסט. תיבת "פגום" ובוחר הקובץ יורים גם input, ושם
   // f.value היה כותב את המחרוזת "on" לתוך הדגל הבוליאני.
-  const TEXT_FIELDS = ['model', 'notes', 'qty'];
+  const TEXT_FIELDS = ['notes'];
 
   box.oninput = (e) => {
     const f = e.target.closest('[data-f]');
     if (!f || !TEXT_FIELDS.includes(f.dataset.f)) return;
     const l = retLines.find((x) => x.key === Number(f.closest('[data-key]').dataset.key));
     if (!l) return;
-    if (f.dataset.f === 'qty') l.qty = Math.max(1, parseInt(f.value, 10) || 1);
-    else l[f.dataset.f] = f.value;
+    l[f.dataset.f] = f.value;
     updateRetSummary();
   };
+
+  box.querySelectorAll('[data-return-size]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const line = retLines.find((item) => item.key === Number(input.closest('[data-key]').dataset.key));
+      if (!line) return;
+      const qty = Math.max(0, parseInt(input.value, 10) || 0);
+      if (qty) line.sizes[input.dataset.returnSize] = qty;
+      else delete line.sizes[input.dataset.returnSize];
+      input.classList.toggle('on', qty > 0);
+      updateRetSummary();
+    });
+  });
 
   box.onchange = async (e) => {
     const key = Number(e.target.closest('[data-key]')?.dataset.key);
@@ -4054,8 +4134,6 @@ function renderRetLines() {
       return;
     }
 
-    const sel = e.target.closest('[data-f="size"]');
-    if (sel) { l.size = sel.value; return; }
   };
 
   box.onclick = (e) => {
@@ -4085,19 +4163,18 @@ async function saveReturn() {
   err.classList.remove('show');
   if (!name) { fail('חסר שם המחזיר'); return; }
 
-  const lines = retLines.filter((l) => Number(l.qty) > 0);
+  const lines = retLines.filter((line) => Object.values(line.sizes || {}).some((qty) => Number(qty) > 0));
   if (!lines.length) { fail('לא הוזנו פריטים'); return; }
 
   const models = new Map(db.products.map((p) => [p.model.trim().toLowerCase(), p.model]));
   for (const l of lines) {
     const key = l.model.trim().toLowerCase();
-    if (!l.defective) {
-      if (!key)              { fail('פריט תקין חייב מספר דגם. סמן אותו כפגום או בחר דגם קיים'); return; }
-      if (!models.has(key))  { fail(`דגם "${l.model}" לא קיים במלאי — בחר מהרשימה או סמן כפגום`); return; }
-      if (!l.size)           { fail(`חסרה מידה לדגם ${l.model}`); return; }
-    } else if (!key && !l.photo && !l.notes.trim()) {
-      fail('פריט פגום צריך לפחות מספר דגם, תמונה או תיאור'); return;
-    }
+    if (!key || !models.has(key)) { fail(`דגם "${l.model}" לא קיים במלאי`); return; }
+  }
+
+  const discountPct = Number($('rtDiscount').value || 0);
+  if (!Number.isFinite(discountPct) || discountPct < 0 || discountPct > 100) {
+    fail('אחוז ההנחה חייב להיות בין 0 ל־100'); return;
   }
 
   btn.disabled = true;
@@ -4117,14 +4194,17 @@ async function saveReturn() {
         uploaded.push(path);
         photoUrl = sb.storage.from('return-photos').getPublicUrl(path).data.publicUrl;
       }
-      items.push({
-        model: models.get(l.model.trim().toLowerCase()) || l.model.trim() || null,
-        size: l.size || null,
-        qty: Number(l.qty),
-        is_defective: !!l.defective,
-        photo_url: photoUrl,
-        notes: l.notes.trim() || null,
-      });
+      for (const [size, qty] of Object.entries(l.sizes || {})) {
+        if (Number(qty) <= 0) continue;
+        items.push({
+          model: models.get(l.model.trim().toLowerCase()),
+          size,
+          qty: Number(qty),
+          is_defective: !!l.defective,
+          photo_url: photoUrl,
+          notes: l.notes.trim() || null,
+        });
+      }
     }
 
     // שם שתואם לקוח קיים משייך את החזרה לכרטיס שלו
@@ -4140,6 +4220,19 @@ async function saveReturn() {
       p_items: items,
     });
     if (error) throw error;
+
+    const createdReturnId = data.return_id || data.id;
+    let discountReturnId = createdReturnId;
+    if (!discountReturnId) {
+      const { data: created, error: lookupError } = await sb.from('returns')
+        .select('id').eq('return_number', data.return_number).single();
+      if (lookupError) throw lookupError;
+      discountReturnId = created.id;
+    }
+    const { error: discountError } = await sb.rpc('set_return_discount', {
+      p_return_id: discountReturnId, p_discount_pct: discountPct,
+    });
+    if (discountError) throw discountError;
 
     toast(`חזרה #${data.return_number} נקלטה · ${fmtNum(data.restocked)} למלאי · ${fmtNum(data.damaged)} פגומות`);
     closeModal();
@@ -5041,7 +5134,7 @@ async function openIcountRefundPreview(returnId) {
       for (const item of returnItemsOf(returnId)) {
         const product = productByModel(item.model);
         const base = Number(customer.price_at_cost ? product?.cost_price : product?.wholesale_price || 0);
-        const price = roundMoney(base * (customer.price_at_cost ? 1 : 1 - Number(customer.discount_pct || 0) / 100));
+        const price = roundMoney(base * (1 - Number(returnRow.discount_pct || 0) / 100));
         if (price <= 0) throw new Error(`לא נמצא מחיר לזיכוי עבור הדגם ${item.model}`);
         const key = `${item.model}\u0000${price}`;
         if (!grouped.has(key)) grouped.set(key, {
@@ -5055,6 +5148,7 @@ async function openIcountRefundPreview(returnId) {
         lines, subtotal, vat: roundMoney(subtotal * .18), total_with_vat: roundMoney(subtotal * 1.18),
         doc_date: todayISO(), client_name: customer.business_name || customer.name,
         tax_id: customer.tax_id || '', return_number: returnRow.return_number,
+        discount_pct: Number(returnRow.discount_pct || 0),
       };
     } else {
       const { data, error } = await sb.functions.invoke('icount-invoice', {
@@ -5080,7 +5174,7 @@ async function openIcountRefundPreview(returnId) {
         <div><span class="muted small">חזרה</span><b>#${esc(preview.return_number)}</b></div>
         <div><span class="muted small">תאריך הפקה</span><b>${fmtDate(preview.doc_date, false)}</b></div>
       </div>
-      <div class="note small">המחיר מבוסס על ההזמנה האחרונה של הלקוח שבה הופיע הדגם; אם לא נמצאה, נעשה שימוש במחיר הלקוח הנוכחי.</div>
+      <div class="note small">המחיר מבוסס על ההזמנה האחרונה של הלקוח שבה הופיע הדגם; אם לא נמצאה, נעשה שימוש במחיר הלקוח הנוכחי. הנחת הזיכוי: <b>${fmtNum(Number(preview.discount_pct || 0))}%</b>.</div>
       <div class="table-wrap"><table><thead><tr>
         <th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
       </tr></thead><tbody>

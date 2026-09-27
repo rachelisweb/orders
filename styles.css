@@ -1436,6 +1436,32 @@ tr.short td, tr.short { background: #fffbeb; }
   border: 1px solid var(--border); cursor: zoom-in; background: var(--surface-3);
 }
 
+.return-model-picker { display: flex; gap: .5rem; margin: .7rem 0 1rem; }
+.return-model-picker input { flex: 1; min-width: 0; }
+.return-entry-card { padding: .75rem; }
+.return-entry-head { display: flex; align-items: center; gap: .7rem; margin-bottom: .7rem; }
+.return-entry-image {
+  width: 66px; height: 82px; flex: 0 0 66px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-3);
+}
+.return-entry-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.return-entry-image .img-ph { height: 100%; display: grid; place-items: center; }
+.return-entry-sizes { padding: .65rem 0; border-top: 1px solid var(--border); }
+.return-empty { margin-bottom: 1rem; }
+.return-detail-tabs { margin: .8rem 0; }
+.return-model-list { display: grid; gap: .6rem; }
+.return-model-card { margin-bottom: 0; }
+.return-model-card.defective { background: #fffbeb; border-color: #fcd34d; }
+.return-model-notes, .return-photo-strip { grid-column: 2 / -1; }
+.return-photo-strip { display: flex; gap: .4rem; flex-wrap: wrap; }
+
+@media (max-width: 520px) {
+  .return-model-picker { align-items: stretch; }
+  .return-model-picker .btn { padding-inline: .65rem; }
+  .return-entry-sizes .size { flex: 1 0 42px; }
+  .return-model-notes, .return-photo-strip { grid-column: 1 / -1; }
+}
+
 /* ── בחירה מרובה במלאי ────────────────────────────────── */
 .bulk-bar {
   display: none;

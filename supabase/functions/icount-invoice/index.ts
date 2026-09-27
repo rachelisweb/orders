@@ -382,18 +382,16 @@ Deno.serve(async (req) => {
         .limit(200);
       if (priorOrdersError) throw priorOrdersError;
 
+      const returnDiscountPct = Math.min(Math.max(Number(returnRow.discount_pct || 0), 0), 100);
       const priceForModel = (model: string, product: any) => {
         for (const prior of priorOrders || []) {
           const matching = (prior.order_items || []).find((item: any) => item.model === model && Number(item.unit_price) > 0);
           if (!matching) continue;
-          const subtotal = Number(prior.subtotal_amount || 0);
-          const discount = Math.min(Math.max(Number(prior.discount_amount || 0), 0), subtotal);
-          return round2(Number(matching.unit_price) * (subtotal > 0 ? (subtotal - discount) / subtotal : 1));
+          return round2(Number(matching.unit_price) * (1 - returnDiscountPct / 100));
         }
         const base = Number(customer.price_at_cost ? product?.cost_price : product?.wholesale_price);
         if (!Number.isFinite(base) || base <= 0) return 0;
-        const discountPct = customer.price_at_cost ? 0 : Math.min(Math.max(Number(customer.discount_pct || 0), 0), 100);
-        return round2(base * (1 - discountPct / 100));
+        return round2(base * (1 - returnDiscountPct / 100));
       };
 
       const grouped = new Map<string, any>();
@@ -431,6 +429,7 @@ Deno.serve(async (req) => {
         lines, subtotal, vat, total_with_vat: totalWithVat, doc_date: docDate,
         doctype: 'refund', document_title: 'חשבונית זיכוי', client_name: clientName,
         tax_id: customer.tax_id || '', return_number: returnRow.return_number,
+        discount_pct: returnDiscountPct,
       };
       if (body.action === 'refund_preview') return jsonResponse({ ok: true, preview, fingerprint });
 
