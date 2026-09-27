@@ -382,16 +382,15 @@ Deno.serve(async (req) => {
         .limit(200);
       if (priorOrdersError) throw priorOrdersError;
 
-      const returnDiscountPct = Math.min(Math.max(Number(returnRow.discount_pct || 0), 0), 100);
       const priceForModel = (model: string, product: any) => {
         for (const prior of priorOrders || []) {
           const matching = (prior.order_items || []).find((item: any) => item.model === model && Number(item.unit_price) > 0);
           if (!matching) continue;
-          return round2(Number(matching.unit_price) * (1 - returnDiscountPct / 100));
+          return round2(Number(matching.unit_price));
         }
         const base = Number(customer.price_at_cost ? product?.cost_price : product?.wholesale_price);
         if (!Number.isFinite(base) || base <= 0) return 0;
-        return round2(base * (1 - returnDiscountPct / 100));
+        return round2(base);
       };
 
       const grouped = new Map<string, any>();
@@ -413,9 +412,17 @@ Deno.serve(async (req) => {
         });
         grouped.get(key).quantity += quantity;
       }
-      const lines = [...grouped.values()];
-      if (!lines.length) return jsonResponse({ ok: false, error: 'אין פריטים שניתן לזכות' }, 409);
+      const grossLines = [...grouped.values()];
+      if (!grossLines.length) return jsonResponse({ ok: false, error: 'אין פריטים שניתן לזכות' }, 409);
 
+      const grossSubtotal = round2(grossLines.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
+      const discountType = returnRow.discount_type || (Number(returnRow.discount_pct || 0) > 0 ? 'pct' : null);
+      const discountValue = Math.max(Number(returnRow.discount_value ?? returnRow.discount_pct ?? 0), 0);
+      const discountAmount = round2(discountType === 'pct'
+        ? grossSubtotal * Math.min(discountValue, 100) / 100
+        : discountType === 'amt' ? Math.min(discountValue, grossSubtotal) : 0);
+      const discountRatio = grossSubtotal > 0 ? discountAmount / grossSubtotal : 0;
+      const lines = grossLines.map((item) => ({ ...item, unitprice: round2(item.unitprice * (1 - discountRatio)) }));
       const subtotal = round2(lines.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
       const vat = round2(subtotal * VAT_PERCENT / 100);
       const totalWithVat = round2(subtotal + vat);
@@ -429,7 +436,8 @@ Deno.serve(async (req) => {
         lines, subtotal, vat, total_with_vat: totalWithVat, doc_date: docDate,
         doctype: 'refund', document_title: 'חשבונית זיכוי', client_name: clientName,
         tax_id: customer.tax_id || '', return_number: returnRow.return_number,
-        discount_pct: returnDiscountPct,
+        discount_type: discountType, discount_value: discountValue,
+        discount_amount: discountAmount, gross_subtotal: grossSubtotal,
       };
       if (body.action === 'refund_preview') return jsonResponse({ ok: true, preview, fingerprint });
 

@@ -180,6 +180,7 @@ function loadReviewFixtures() {
     returner_name: customerA.name, customer_id: customerA.id, customer_name: customerA.business_name,
     return_date: '2026-08-18', created_at: '2026-08-18T09:00:00Z', status: 'pending',
     total_units: 2, damaged_units: 0, notes: 'חזרת בדיקה מקומית', credited_at: null,
+    discount_type: 'pct', discount_value: customerA.discount_pct, discount_pct: customerA.discount_pct,
   }];
   db.returnItems = [{
     id: 1, return_id: db.returns[0].id, product_id: db.products[0].id,
@@ -3744,6 +3745,13 @@ function editProduct(id) {
 const returnItemsOf = (id) => db.returnItems.filter((i) => i.return_id === id);
 const refundInvoice = (returnId) => db.invoices.find((invoice) =>
   invoice.return_id === returnId && invoice.status !== 'cancelled' && invoice.external_doctype === 'refund') || null;
+const returnDiscountType = (row) => row.discount_type || (Number(row.discount_pct || 0) > 0 ? 'pct' : null);
+const returnDiscountValue = (row) => Number(row.discount_value ?? row.discount_pct ?? 0);
+function returnDiscountLabel(row) {
+  const value = returnDiscountValue(row);
+  if (!(value > 0)) return 'ללא הנחה';
+  return returnDiscountType(row) === 'amt' ? fmtMoney(value) : `${fmtNum(value)}%`;
+}
 
 function groupedReturnItems(items, defective) {
   const groups = new Map();
@@ -3869,10 +3877,23 @@ function openReturn(id) {
         <div><span class="muted">מהן פגומות:</span> <b>${fmtNum(r.damaged_units)}</b></div>
         <div><span class="muted">נקלטה:</span> ${fmtDate(r.created_at)}</div>
         <div><span class="muted">זוכתה:</span> ${r.credited_at ? fmtDate(r.credited_at) : '—'}</div>
-        <div><span class="muted">הנחה בזיכוי:</span> <b>${fmtNum(Number(r.discount_pct || 0))}%</b></div>
+        <div><span class="muted">הנחה בזיכוי:</span> <b>${returnDiscountLabel(r)}</b></div>
       </div>
       ${r.notes ? `<div class="small" style="margin-top:.5rem"><span class="muted">הערה:</span> ${esc(r.notes)}</div>` : ''}
     </div>
+
+    ${r.status === 'pending' && !refund ? `
+      <div class="note small">אם קיימת הנחה קבועה בכרטיס הלקוח היא משוקללת אוטומטית. אפשר לעדכן לפי ההנחה שניתנה בקנייה.</div>
+      <div class="disc-row return-discount-editor" style="margin-bottom:.9rem">
+        <div class="seg" id="retDiscSeg">
+          <button type="button" data-ret-dtype="pct" class="${returnDiscountType(r) !== 'amt' ? 'on' : ''}">%</button>
+          <button type="button" data-ret-dtype="amt" class="${returnDiscountType(r) === 'amt' ? 'on' : ''}">₪</button>
+        </div>
+        <input type="number" id="retDiscValue" min="0" step="0.5" inputmode="decimal"
+               value="${returnDiscountValue(r) > 0 ? returnDiscountValue(r) : ''}" placeholder="0"
+               aria-label="שיעור או סכום ההנחה בזיכוי">
+        <button class="btn sm" id="retDiscSave">שמירת הנחה</button>
+      </div>` : ''}
 
     <h4 class="bold" style="margin-bottom:.5rem">פריטים (${fmtNum(r.total_units)} יח׳)</h4>
     <div class="note small">פריטים תקינים כבר נוספו למלאי בזמן הקליטה. פגומים לא נכנסו.</div>
@@ -3899,6 +3920,7 @@ function openReturn(id) {
     </div>`;
 
   $('orderOverlay').classList.add('active');
+  wireReturnDiscount(r);
   $('orderPanelBody').onclick = (event) => {
     const tab = event.target.closest('[data-return-detail]');
     if (tab) {
@@ -3907,6 +3929,37 @@ function openReturn(id) {
       $$('#orderPanelBody [data-return-detail-panel]').forEach((panel) => { panel.hidden = panel.dataset.returnDetailPanel !== selected; });
     }
   };
+}
+
+function wireReturnDiscount(row) {
+  const segment = $('retDiscSeg');
+  if (!segment) return;
+  let type = returnDiscountType(row) === 'amt' ? 'amt' : 'pct';
+  segment.onclick = (event) => {
+    const button = event.target.closest('[data-ret-dtype]');
+    if (!button) return;
+    type = button.dataset.retDtype;
+    $$('#retDiscSeg button').forEach((item) => item.classList.toggle('on', item === button));
+  };
+  on('retDiscSave', 'click', async () => {
+    const value = Number($('retDiscValue').value || 0);
+    if (!Number.isFinite(value) || value < 0) { toast('ערך ההנחה אינו תקין', true); return; }
+    if (type === 'pct' && value > 100) { toast('אחוז הנחה לא יכול לעבור 100', true); return; }
+    const button = $('retDiscSave');
+    button.disabled = true;
+    try {
+      const { error } = await sb.rpc('set_return_discount_v2', {
+        p_return_id: row.id, p_type: value > 0 ? type : null, p_value: value,
+      });
+      if (error) throw error;
+      toast(value > 0 ? `הנחת הזיכוי נשמרה: ${type === 'amt' ? fmtMoney(value) : `${fmtNum(value)}%`}` : 'הנחת הזיכוי בוטלה');
+      await loadAll();
+      openReturn(row.id);
+    } catch (error) {
+      toast(friendlyError(error), true);
+      button.disabled = false;
+    }
+  });
 }
 
 async function creditReturn(id) {
@@ -3941,6 +3994,7 @@ async function removeReturn(id) {
 // קורית פעם אחת, בשמירה, כדי שביטול הטופס לא ישאיר קבצים יתומים.
 let retLines = [];
 let retSeq = 0;
+let retDiscountType = 'pct';
 
 // blob URL לכל תצוגה מקדימה נוצר פעם אחת ומשוחרר בהחלפה או בהסרה.
 // בלי זה כל רינדור מחדש של הטופס היה מדליף עוד עותק של התמונה.
@@ -3958,6 +4012,7 @@ function clearRetLines() {
 function newReturn() {
   clearRetLines();
   retSeq = 0;
+  retDiscountType = 'pct';
 
   modal('🔄 קליטת חזרה', `
     <div class="grid-2">
@@ -3970,9 +4025,15 @@ function newReturn() {
       </div>
       <div class="field"><label for="rtDate">תאריך <span class="req">*</span></label>
         <input type="date" id="rtDate" value="${todayISO()}"></div>
-      <div class="field"><label for="rtDiscount">אחוז הנחה בזיכוי</label>
-        <input type="number" id="rtDiscount" min="0" max="100" step="0.5" inputmode="decimal" value="0">
-        <div class="hint">מתעדכן אוטומטית לפי כרטיס הלקוח וניתן לשינוי</div>
+      <div class="field"><label for="rtDiscount">הנחה שניתנה בקנייה</label>
+        <div class="disc-row">
+          <div class="seg" id="rtDiscountSeg">
+            <button type="button" data-return-dtype="pct" class="on">%</button>
+            <button type="button" data-return-dtype="amt">₪</button>
+          </div>
+          <input type="number" id="rtDiscount" min="0" step="0.5" inputmode="decimal" value="0" aria-label="שיעור או סכום ההנחה">
+        </div>
+        <div class="hint" id="rtDiscountHint">אם קיימת הנחה קבועה בכרטיס הלקוח היא תוזן אוטומטית</div>
       </div>
     </div>
 
@@ -4005,8 +4066,21 @@ function newReturn() {
     const name = $('rtName').value.trim().toLowerCase();
     const customer = db.customers.find((c) =>
       (c.business_name || '').toLowerCase() === name || (c.name || '').toLowerCase() === name);
-    if (customer) $('rtDiscount').value = Number(customer.price_at_cost ? 0 : customer.discount_pct || 0);
+    if (customer) {
+      retDiscountType = 'pct';
+      $('rtDiscount').value = Number(customer.price_at_cost ? 0 : customer.discount_pct || 0);
+      $$('#rtDiscountSeg button').forEach((button) => button.classList.toggle('on', button.dataset.returnDtype === 'pct'));
+      $('rtDiscountHint').textContent = Number(customer.discount_pct || 0) > 0 && !customer.price_at_cost
+        ? `ההנחה הקבועה של הלקוח היא ${fmtNum(customer.discount_pct)}%`
+        : 'אין ללקוח הנחה קבועה — אפשר להזין אחוז או סכום שניתנו בקנייה';
+    }
   });
+  $('rtDiscountSeg').onclick = (event) => {
+    const button = event.target.closest('[data-return-dtype]');
+    if (!button) return;
+    retDiscountType = button.dataset.returnDtype;
+    $$('#rtDiscountSeg button').forEach((item) => item.classList.toggle('on', item === button));
+  };
   on('rtAdd', 'click', () => addRetLine($('rtAddModel').value));
   on('rtAddModel', 'keydown', (event) => {
     if (event.key === 'Enter') { event.preventDefault(); addRetLine(event.currentTarget.value); }
@@ -4172,8 +4246,11 @@ async function saveReturn() {
     if (!key || !models.has(key)) { fail(`דגם "${l.model}" לא קיים במלאי`); return; }
   }
 
-  const discountPct = Number($('rtDiscount').value || 0);
-  if (!Number.isFinite(discountPct) || discountPct < 0 || discountPct > 100) {
+  const discountValue = Number($('rtDiscount').value || 0);
+  if (!Number.isFinite(discountValue) || discountValue < 0) {
+    fail('ערך ההנחה אינו תקין'); return;
+  }
+  if (retDiscountType === 'pct' && discountValue > 100) {
     fail('אחוז ההנחה חייב להיות בין 0 ל־100'); return;
   }
 
@@ -4229,8 +4306,10 @@ async function saveReturn() {
       if (lookupError) throw lookupError;
       discountReturnId = created.id;
     }
-    const { error: discountError } = await sb.rpc('set_return_discount', {
-      p_return_id: discountReturnId, p_discount_pct: discountPct,
+    const { error: discountError } = await sb.rpc('set_return_discount_v2', {
+      p_return_id: discountReturnId,
+      p_type: discountValue > 0 ? retDiscountType : null,
+      p_value: discountValue,
     });
     if (discountError) throw discountError;
 
@@ -5134,21 +5213,29 @@ async function openIcountRefundPreview(returnId) {
       for (const item of returnItemsOf(returnId)) {
         const product = productByModel(item.model);
         const base = Number(customer.price_at_cost ? product?.cost_price : product?.wholesale_price || 0);
-        const price = roundMoney(base * (1 - Number(returnRow.discount_pct || 0) / 100));
-        if (price <= 0) throw new Error(`לא נמצא מחיר לזיכוי עבור הדגם ${item.model}`);
-        const key = `${item.model}\u0000${price}`;
+        if (base <= 0) throw new Error(`לא נמצא מחיר לזיכוי עבור הדגם ${item.model}`);
+        const key = `${item.model}\u0000${base}`;
         if (!grouped.has(key)) grouped.set(key, {
-          sku: item.model, description: product?.description || item.model, quantity: 0, unitprice: price,
+          sku: item.model, description: product?.description || item.model, quantity: 0, unitprice: base,
         });
         grouped.get(key).quantity += Number(item.qty || 0);
       }
-      const lines = [...grouped.values()];
+      const grossLines = [...grouped.values()];
+      const grossSubtotal = roundMoney(grossLines.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
+      const discountType = returnDiscountType(returnRow);
+      const discountValue = returnDiscountValue(returnRow);
+      const discountAmount = roundMoney(discountType === 'pct'
+        ? grossSubtotal * Math.min(discountValue, 100) / 100
+        : discountType === 'amt' ? Math.min(discountValue, grossSubtotal) : 0);
+      const ratio = grossSubtotal > 0 ? discountAmount / grossSubtotal : 0;
+      const lines = grossLines.map((item) => ({ ...item, unitprice: roundMoney(item.unitprice * (1 - ratio)) }));
       const subtotal = roundMoney(lines.reduce((sum, item) => sum + item.quantity * item.unitprice, 0));
       preview = {
         lines, subtotal, vat: roundMoney(subtotal * .18), total_with_vat: roundMoney(subtotal * 1.18),
         doc_date: todayISO(), client_name: customer.business_name || customer.name,
         tax_id: customer.tax_id || '', return_number: returnRow.return_number,
-        discount_pct: Number(returnRow.discount_pct || 0),
+        discount_type: discountType, discount_value: discountValue,
+        discount_amount: discountAmount, gross_subtotal: grossSubtotal,
       };
     } else {
       const { data, error } = await sb.functions.invoke('icount-invoice', {
@@ -5174,7 +5261,7 @@ async function openIcountRefundPreview(returnId) {
         <div><span class="muted small">חזרה</span><b>#${esc(preview.return_number)}</b></div>
         <div><span class="muted small">תאריך הפקה</span><b>${fmtDate(preview.doc_date, false)}</b></div>
       </div>
-      <div class="note small">המחיר מבוסס על ההזמנה האחרונה של הלקוח שבה הופיע הדגם; אם לא נמצאה, נעשה שימוש במחיר הלקוח הנוכחי. הנחת הזיכוי: <b>${fmtNum(Number(preview.discount_pct || 0))}%</b>.</div>
+      <div class="note small">המחיר מבוסס על ההזמנה האחרונה של הלקוח שבה הופיע הדגם; אם לא נמצאה, נעשה שימוש במחיר הלקוח הנוכחי. הנחת הזיכוי: <b>${preview.discount_type === 'amt' ? fmtMoney(preview.discount_value) : preview.discount_type === 'pct' ? `${fmtNum(preview.discount_value)}%` : 'ללא הנחה'}</b>.</div>
       <div class="table-wrap"><table><thead><tr>
         <th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
       </tr></thead><tbody>
@@ -5186,6 +5273,9 @@ async function openIcountRefundPreview(returnId) {
         </tr>`).join('')}
       </tbody></table></div>
       <div class="invoice-totals">
+        ${Number(preview.discount_amount || 0) > 0 ? `
+          <span>לפני הנחה</span><b>${fmtMoney(preview.gross_subtotal)}</b>
+          <span>הנחה</span><b style="color:var(--success)">−${fmtMoney(preview.discount_amount)}</b>` : ''}
         <span>לפני מע״מ</span><b>${fmtMoney(preview.subtotal)}</b>
         <span>מע״מ 18%</span><b>${fmtMoney(preview.vat)}</b>
         <span class="invoice-grand">סה״כ זיכוי כולל מע״מ</span><b class="invoice-grand">${fmtMoney(preview.total_with_vat)}</b>
@@ -6290,7 +6380,7 @@ function wire() {
       '[data-del-inv]', '[data-delete-cust]', '[data-approve-duplicate]', '[data-reject-duplicate]',
       '[data-delete-user]', '[data-del-mail]', '[data-del-return]', '[data-del-item]', '[data-assign]',
       '[data-resend-shipped]', '[data-model-check]', '[data-demand-model-check]', '[data-split-order]',
-       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#payableSave', '#customPriceSave', '#admNotesSave', '#icountCreate', '#icountRefundCreate', '#flexInvoiceCreate',
+       '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#retDiscSave', '#payableSave', '#customPriceSave', '#admNotesSave', '#icountCreate', '#icountRefundCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#pImagePick', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave', '#profitExcludedSave',
       '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
