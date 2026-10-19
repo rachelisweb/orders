@@ -6197,9 +6197,7 @@ async function invokeShopifySync(body) {
 async function syncShopify() {
   const btn = $('syncShopifyBtn');
   const out = $('syncResult');
-  if (!confirm('לסנכרן עכשיו את כל הדגמים לשופיפיי?
-
-מלאי, מחיר לקוח קצה וקולקציה. זה עשוי לקחת דקה או שתיים.')) return;
+  if (!confirm('לסנכרן עכשיו את כל הדגמים לשופיפיי?\n\nמלאי, מחיר לקוח קצה וקולקציה. זה עשוי לקחת דקה או שתיים.')) return;
 
   btn.disabled = true;
   btn.textContent = '⏳ מסנכרן…';
