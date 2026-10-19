@@ -490,6 +490,16 @@ Deno.serve(async (req) => {
 
   const shop = new Shopify();
 
+  if (body.action === 'scopes') {
+    try {
+      await shop.connect();
+      const data = await shop.gql(`{ currentAppInstallation { accessScopes { handle } } }`);
+      return json({ ok: true, scopes: data.currentAppInstallation.accessScopes.map((s: any) => s.handle) });
+    } catch (e) {
+      return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  }
+
   if (body.action === 'register_webhooks') {
     try {
       await shop.connect();
@@ -534,8 +544,10 @@ Deno.serve(async (req) => {
   }
 
   // ── סנכרון אמיתי ──
-  const { data: runStarted } = await sb.rpc('shopify_sync_claim', { p_seconds: 170 });
-  if (!runStarted) return json({ ok: true, busy: true, message: 'סנכרון אחר כבר רץ' });
+  const { data: claimedAt } = await sb.rpc('shopify_sync_claim', { p_seconds: 170 });
+  if (!claimedAt) return json({ ok: true, busy: true, message: 'סנכרון אחר כבר רץ' });
+  // שורות שנכנסו לתור עד הרגע הזה מטופלות בריצה; מה שנכנס אחריו נשאר לריצה הבאה
+  let runStarted: string = claimedAt;
 
   let ids: string[] = [];
   const done: string[] = [];
@@ -549,9 +561,11 @@ Deno.serve(async (req) => {
     }
 
     const { data: queue, error: qErr } = await sb.from('shopify_sync_queue')
-      .select('product_id').lt('attempts', 5).order('queued_at').limit(500);
+      .select('product_id, queued_at').lt('attempts', 5).order('queued_at').limit(500);
     if (qErr) throw qErr;
     ids = (queue || []).map((q: any) => q.product_id);
+    // בסנכרון מלא השורות נכנסו לתור אחרי תפיסת הנעילה — הנתונים נטענים רק אחרי הקריאה הזו
+    for (const q of queue || []) if (q.queued_at > runStarted) runStarted = q.queued_at;
 
     if (ids.length) {
       await shop.connect();
