@@ -8,6 +8,8 @@ import {
   makeSortable, exportXlsx, exportCsv, readXlsxRows, setCustomerPreview,
   ORDER_STATUS, STATUS_FLOW, RETURN_STATUS,
 } from './lib.js?v=20260905-2';
+import { allocationTaxIdError } from './invoice-policy.js?v=20261019-1';
+import { uniqueEmails, uniquePhones } from './contact-utils.js?v=20261019-1';
 
 const db = {
   collections: [], products: [], orders: [], customers: [],
@@ -784,16 +786,16 @@ function renderNewOrderCustomerMode() {
   showError('newOrderError', '');
 }
 
-const customerEmailList = (customer) => [...new Set([
+const customerEmailList = (customer) => uniqueEmails([
   ...(Array.isArray(customer?.email_recipients) ? customer.email_recipients : []),
   customer?.email,
-].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
+]);
 
-const customerPhoneList = (customer, ...extraPhones) => [...new Set([
+const customerPhoneList = (customer, ...extraPhones) => uniquePhones([
   customer?.phone,
   ...(Array.isArray(customer?.phone_numbers) ? customer.phone_numbers : []),
   ...extraPhones,
-].map((phone) => String(phone || '').trim()).filter(Boolean))];
+]);
 
 const customerPhoneLinks = (customer, ...extraPhones) => {
   const phones = customerPhoneList(customer, ...extraPhones);
@@ -893,10 +895,7 @@ function renderNewOrderCollections() {
   }).join('');
 }
 
-const parseCustomerPhones = (value) => [...new Set(String(value || '')
-  .split(/[\n,;]+/)
-  .map((phone) => phone.trim())
-  .filter(Boolean))];
+const parseCustomerPhones = (value) => uniquePhones(String(value || '').split(/[\n,;]+/));
 
 function searchNewOrderProducts() {
   const q = $('newOrderProductSearch').value.trim().toLowerCase();
@@ -1465,7 +1464,7 @@ function renderOrders() {
   $('ordersTable').innerHTML = `
     ${futureView ? futureFolderSettings(orders.length) : ''}
     ${archiveView ? `<div class="archive-tools">
-       <input type="search" id="archiveSearch" value="${esc(archiveSearch)}"
+       <input type="search" id="archiveSearch" dir="rtl" value="${esc(archiveSearch)}"
          placeholder="🔍 חיפוש לפי מספר הזמנה, שם לקוח או תאריך" aria-label="חיפוש בארכיון">
        <details class="archive-filter-menu" id="archiveFilterMenu" ${archiveFiltersOpen ? 'open' : ''}>
          <summary class="btn ghost" aria-label="פתיחת מסנני הארכיון" title="מסננים">
@@ -1533,8 +1532,12 @@ function renderOrders() {
   on('archiveSearch', 'input', debounce((e) => {
     archiveSearch = e.target.value;
     archiveVisible = 10;
+    // Keep the actual input and its caret. Recreating a focused RTL search
+    // field on each keystroke moves the caret and reverses the typed text.
+    const searchInput = e.target;
     renderOrders();
-    $('archiveSearch')?.focus();
+    const replacement = $('archiveSearch');
+    if (replacement) { replacement.replaceWith(searchInput); searchInput.focus(); }
   }, 180));
   const applyArchiveFilters = () => {
     archiveFilters.customer = $('archiveCustomer')?.value || '';
@@ -1937,6 +1940,8 @@ function openOrder(id) {
       ${splitOrderChip(o)}
       ${isArchived(o) ? '<span class="chip gray">🗄️ בארכיון</span>' : ''}
       <span class="muted small">${fmtDate(o.created_at)}</span>
+      <span class="grow"></span>
+      <button class="btn ghost sm" data-export-order="${o.id}">⬇️ ייצוא לאקסל</button>
     </div>
 
     <div class="card" style="padding:.8rem;margin-bottom:.9rem">
@@ -3270,6 +3275,8 @@ function renderStockCollectionTabs() {
 }
 
 function renderStock() {
+  renderCatalogDisplaySettings();
+  renderCollections();
   const items = stockProducts();
   const box = $('stockList');
   $('sortHint').style.display = stockSortMode ? 'block' : 'none';
@@ -4348,6 +4355,112 @@ async function saveReturn() {
 // ============================================================
 // קולקציות
 // ============================================================
+function catalogPreferences() {
+  try { return JSON.parse(db.settings.catalog_display || '{}'); } catch { return {}; }
+}
+
+function renderCatalogDisplaySettings() {
+  const prefs = catalogPreferences();
+  $('catalogDisplaySettings').innerHTML = `
+    <h3>מה הלקוח רואה?</h3>
+    <div class="grid-2">
+      <div class="field"><label for="catalogDisplayMode">אופן הצגת הפריטים</label>
+        <select id="catalogDisplayMode">
+          <option value="collections" ${!prefs.mode || prefs.mode === 'collections' ? 'selected' : ''}>חלוקה לקולקציות הפעילות</option>
+          <option value="all" ${prefs.mode === 'all' ? 'selected' : ''}>כל הפריטים יחד, ללא חלוקה לקולקציות</option>
+          <option value="single" ${prefs.mode === 'single' ? 'selected' : ''}>רק קולקציה שאבחר</option>
+        </select>
+      </div>
+      <div class="field" id="catalogSingleField"><label for="catalogSingleCollection">הקולקציה שתוצג</label>
+        <select id="catalogSingleCollection">${db.collections.filter((c) => c.is_active).map((c) =>
+          `<option value="${c.id}" ${prefs.collection_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div class="note small">רק דגמים המסומנים „מוצג בקטלוג” מוצגים. גם במצב „כל הפריטים” קולקציות מוסתרות נשארות מוסתרות.</div>
+    <button class="btn sm" id="catalogDisplaySave">שמירת תצוגת הלקוח</button>`;
+  const toggle = () => { $('catalogSingleField').hidden = $('catalogDisplayMode').value !== 'single'; };
+  on('catalogDisplayMode', 'change', toggle);
+  toggle();
+  on('catalogDisplaySave', 'click', async () => {
+    const mode = $('catalogDisplayMode').value;
+    const collectionId = $('catalogSingleCollection').value || null;
+    if (mode === 'single' && !collectionId) { toast('יש לבחור קולקציה פעילה', true); return; }
+    $('catalogDisplaySave').disabled = true;
+    try {
+      const { error } = await sb.rpc('set_catalog_preferences', { p_mode: mode, p_collection_id: collectionId });
+      if (error) throw error;
+      db.settings.catalog_display = JSON.stringify({ mode, collection_id: collectionId });
+      toast('תצוגת הלקוח נשמרה');
+    } catch (error) { toast(friendlyError(error), true); }
+    finally { if ($('catalogDisplaySave')) $('catalogDisplaySave').disabled = false; }
+  });
+}
+
+function openCollectionImport(collectionId = '', productIds = []) {
+  const available = db.products.filter((p) => !p.retired_at);
+  const selected = new Set(productIds);
+  modal('ייבוא דגמים לקולקציה', `
+    <div class="field"><label for="importTargetCollection">קולקציית יעד</label>
+      <select id="importTargetCollection">${db.collections.map((c) =>
+        `<option value="${c.id}" ${c.id === collectionId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+    <div class="note small">בחר דגמים קיימים מהמלאי או טען קובץ אקסל עם עמודת „דגם”. הדגמים יועברו לקולקציה שנבחרה, עם הכמויות והמחירים הקיימים. דגם חדש מוסיפים דרך „דגם” במלאי.</div>
+    <div class="row"><button class="btn ghost sm" id="collectionImportFileBtn">⬆️ בחירה לפי אקסל</button>
+      <input type="file" id="collectionImportFile" accept=".xlsx,.xls" hidden>
+      <input type="search" id="collectionImportSearch" class="grow" placeholder="חיפוש דגם" dir="rtl"></div>
+    <div id="collectionImportList" class="collection-import-list" style="max-height:320px;overflow:auto;margin:.8rem 0"></div>
+    <div class="err-msg" id="collectionImportError"></div>
+    <button class="btn block" id="collectionImportSave">העברת הדגמים שנבחרו</button>`, true);
+  const render = () => {
+    const query = $('collectionImportSearch').value.trim().toLowerCase();
+    $('collectionImportList').innerHTML = available.filter((p) => !query || `${p.model} ${p.description || ''}`.toLowerCase().includes(query))
+      .map((p) => `<label class="setting-check"><input type="checkbox" data-import-product="${p.id}" ${selected.has(p.id) ? 'checked' : ''}>
+        <span><b>${esc(p.model)}</b><small>${esc(p.collections?.name || 'ללא קולקציה')} · ${esc(p.description || '')}</small></span></label>`).join('');
+    $('collectionImportSave').textContent = `העברת ${selected.size} דגמים לקולקציה`;
+    $('collectionImportSave').disabled = !selected.size;
+  };
+  on('collectionImportSearch', 'input', render);
+  $('collectionImportList').onchange = (event) => {
+    const id = event.target.dataset.importProduct;
+    if (!id) return;
+    event.target.checked ? selected.add(id) : selected.delete(id);
+    render();
+  };
+  on('collectionImportFileBtn', 'click', () => $('collectionImportFile').click());
+  on('collectionImportFile', 'change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const rows = await readXlsxRows(file);
+      const headers = (rows.shift() || []).map((value) => String(value).trim().toLowerCase());
+      const modelColumn = headers.findIndex((value) => ['דגם', 'model', 'מספר דגם'].includes(value));
+      if (modelColumn < 0) throw new Error('חסרה עמודת „דגם” בקובץ');
+      const models = [...new Set(rows.map((row) => String(row[modelColumn] ?? '').trim()).filter(Boolean))];
+      if (!models.length) throw new Error('הקובץ חייב לכלול עמודת „דגם” עם מספרי דגמים קיימים');
+      const missing = models.filter((model) => !available.some((p) => p.model === model));
+      if (missing.length) throw new Error(`הדגמים הבאים אינם קיימים במלאי: ${missing.join(', ')}. יש להוסיף אותם במלאי לפני הייבוא.`);
+      models.forEach((model) => selected.add(available.find((p) => p.model === model).id));
+      showError('collectionImportError', '');
+      render();
+    } catch (error) { showError('collectionImportError', friendlyError(error)); }
+    finally { event.target.value = ''; }
+  });
+  on('collectionImportSave', 'click', async () => {
+    if (!selected.size) return;
+    $('collectionImportSave').disabled = true;
+    try {
+      const { data, error } = await sb.rpc('move_products_to_collection', {
+        p_collection_id: $('importTargetCollection').value, p_product_ids: [...selected],
+      });
+      if (error) throw error;
+      toast(`${fmtNum(data.count)} דגמים הועברו לקולקציה`);
+      picked.clear();
+      closeModal();
+      await loadAll();
+    } catch (error) { showError('collectionImportError', friendlyError(error)); $('collectionImportSave').disabled = false; }
+  });
+  render();
+}
+
 function renderCollections() {
   const box = $('collectionList');
   if (!db.collections.length) {
@@ -4365,6 +4478,7 @@ function renderCollections() {
         <div class="small muted">${ps.length} דגמים · ${fmtNum(ps.reduce((a, p) => a + p.total, 0))} יח׳</div>
       </div>
       ${c.is_active ? '<span class="chip green">פעילה</span>' : '<span class="chip gray">מוסתרת</span>'}
+      <button class="btn ghost sm" data-import-col="${c.id}">⬆️ ייבוא דגמים</button>
       <button class="btn ghost sm" data-edit-col="${c.id}">✏️</button>
     </div>`;
   }).join('');
@@ -4386,6 +4500,8 @@ function renderCollections() {
   });
 
   box.onclick = (e) => {
+    const importer = e.target.closest('[data-import-col]');
+    if (importer) { openCollectionImport(importer.dataset.importCol); return; }
     const b = e.target.closest('[data-edit-col]');
     if (b) editCollection(b.dataset.editCol);
   };
@@ -4737,7 +4853,7 @@ function editCustomer(id) {
     </div>
     <div class="grid-2">
       <div class="field"><label>עיר</label><input type="text" id="uCity" value="${esc(c?.city || '')}"></div>
-      <div class="field"><label>ח.פ / ע.מ</label><input type="text" id="uTax" value="${esc(c?.tax_id || '')}"></div>
+      <div class="field"><label>ח.פ / ע.מ / תעודת זהות של העוסק</label><input type="text" id="uTax" inputmode="numeric" value="${esc(c?.tax_id || '')}"></div>
     </div>
     <div class="grid-2">
       <div class="field"><label>כתובת</label><input type="text" id="uAddr" value="${esc(c?.address || '')}"></div>
@@ -5056,6 +5172,7 @@ async function openIcountInvoicePreview(orderId) {
       </div>
       ${blockers.length ? `<div class="note danger-note small"><b>לא ניתן להפיק:</b> ${blockers.map(esc).join(' · ')}</div>` : ''}
       ${warnings.length ? `<div class="note warn small"><b>יש לבדוק:</b> ${warnings.map(esc).join(' · ')}</div>` : ''}
+      <div class="note danger-note small" id="icountAllocationError" hidden></div>
       <div class="table-wrap"><table><thead><tr>
         <th>דגם ופירוט</th><th class="num">כמות</th><th class="num">מחיר לפני מע״מ</th><th class="num">סה״כ</th>
       </tr></thead><tbody>
@@ -5124,6 +5241,9 @@ async function openIcountInvoicePreview(orderId) {
   };
   const updateIcountDocumentOptions = () => {
     const doctype = $('icountDocType')?.value || '';
+    const allocationError = allocationTaxIdError(doctype, p.beforeVat, customer?.tax_id);
+    $('icountAllocationError').hidden = !allocationError;
+    $('icountAllocationError').textContent = allocationError + ' יש לעדכן את הפרטים בכרטיס הלקוח ולפתוח שוב את מסך ההפקה.';
     const needsPayment = doctype === 'receipt' || doctype === 'invrec';
     const paymentMethod = $('icountPaymentMethod')?.value || '';
     $('icountPaymentMethodField').hidden = !needsPayment;
@@ -5133,7 +5253,7 @@ async function openIcountInvoicePreview(orderId) {
     $('icountDateValue').textContent = fmtDate(needsPayment ? date : endOfMonthISO(new Date(`${date}T12:00:00`)), false);
     const payment = paymentValidation();
     $('icountConfirm').checked = false;
-    $('icountConfirm').disabled = blockers.length > 0 || !payment.ok || LOCAL_REVIEW;
+    $('icountConfirm').disabled = blockers.length > 0 || !!allocationError || !payment.ok || LOCAL_REVIEW;
     $('icountCreate').disabled = true;
     $('icountCreate').textContent = `אישור והפקת ${icountDocLabel(doctype)}`;
     $('icountConfirmTitle').textContent = needsPayment
@@ -5163,13 +5283,16 @@ async function openIcountInvoicePreview(orderId) {
   });
   updateIcountDocumentOptions();
   on('icountConfirm', 'change', () => {
-    $('icountCreate').disabled = !$('icountConfirm').checked || blockers.length > 0 || !paymentValidation().ok || LOCAL_REVIEW;
+    $('icountCreate').disabled = !$('icountConfirm').checked || blockers.length > 0
+      || !!allocationTaxIdError($('icountDocType').value, p.beforeVat, customer?.tax_id) || !paymentValidation().ok || LOCAL_REVIEW;
   });
   on('icountCreate', 'click', async () => {
     if (!$('icountConfirm').checked) return;
     const btn = $('icountCreate');
     const errorBox = $('icountError');
     const doctype = $('icountDocType').value;
+    const allocationError = allocationTaxIdError(doctype, p.beforeVat, customer?.tax_id);
+    if (allocationError) { showError('icountError', allocationError); return; }
     const payment = paymentValidation();
     if (!payment.ok) { showError('icountError', 'יש להשלים את פרטי התשלום ולוודא שהסכום תואם למסמך'); return; }
     const needsPayment = doctype === 'receipt' || doctype === 'invrec';
@@ -5431,6 +5554,8 @@ function collectFlexibleInvoice() {
   const discountType = $('flexInvoiceDiscountType').value;
   const discount = roundMoney(discountType === 'pct' ? subtotal * Math.min(discountValue, 100) / 100 : discountValue);
   if (discount > subtotal) throw new Error('ההנחה גבוהה מסכום החשבונית');
+  const allocationError = allocationTaxIdError('invoice', roundMoney(subtotal - discount), $('flexInvoiceTaxId').value);
+  if (allocationError) throw new Error(allocationError);
   const docDate = $('flexInvoiceDate').value;
   const paydate = $('flexInvoicePaydate').value;
   if (!docDate || !paydate || paydate < docDate) throw new Error('יש לבדוק את תאריך ההפקה ותאריך התשלום');
@@ -5534,7 +5659,7 @@ function openFlexibleInvoice() {
       </div>
       <div class="grid-2">
         <div class="field"><label for="flexInvoiceClientName">שם שיופיע בחשבונית *</label><input id="flexInvoiceClientName" type="text"></div>
-        <div class="field"><label for="flexInvoiceTaxId">ח.פ / ע.מ</label><input id="flexInvoiceTaxId" type="text" inputmode="numeric"></div>
+        <div class="field"><label for="flexInvoiceTaxId">ח.פ / ע.מ / תעודת זהות של העוסק</label><input id="flexInvoiceTaxId" type="text" inputmode="numeric"></div>
         <div class="field"><label for="flexInvoiceEmail">מייל</label><input id="flexInvoiceEmail" type="email"></div>
         <div class="field"><label for="flexInvoiceAddress">כתובת</label><input id="flexInvoiceAddress" type="text"></div>
         <div class="field"><label for="flexInvoiceDate">תאריך הפקה</label><input id="flexInvoiceDate" type="date" value="${date}"></div>
@@ -6363,12 +6488,12 @@ function closeModal() {
 // לשוניות
 // ============================================================
 const TABS = ['dash', 'orders', 'stock', 'returns', 'customers', 'invoices',
-              'demand', 'profit', 'collections', 'settings'];
+              'demand', 'profit', 'settings'];
 
 function renderActiveTab() {
   ({
     dash: renderDash, orders: renderOrders, demand: renderDemand, stock: renderStock,
-    returns: renderReturns, profit: renderProfit, collections: renderCollections,
+    returns: renderReturns, profit: renderProfit,
     customers: renderCustomers, invoices: renderInvoices, settings: renderSettings,
   })[activeTab]?.();
 }
@@ -6401,7 +6526,7 @@ function wire() {
        '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#retDiscSave', '#payableSave', '#customPriceSave', '#admNotesSave', '#icountCreate', '#icountRefundCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#pImagePick', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave', '#profitExcludedSave',
-      '#profitStartClear', '#syncShopifyBtn', '#testMailBtn',
+      '#profitStartClear', '#syncShopifyBtn', '#testMailBtn', '#catalogDisplaySave', '#collectionImportSave',
     ].join(',');
     document.addEventListener('click', (e) => {
       if (!e.target.closest(blockedClick)) return;
@@ -6433,6 +6558,11 @@ function wire() {
   on('denySignout', 'click', async () => { await sb.auth.signOut(); window.location.href = 'index.html'; });
 
   on('stockSearch', 'input', debounce(renderStock, 200));
+  on('manageCollectionsBtn', 'click', () => {
+    $('stockCollections').open = true;
+    $('stockCollections').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  on('bulkCollection', 'click', () => openCollectionImport($('stockCollection').value, [...picked]));
   on('stockCollection', 'change', renderStock);
   on('stockSortMode', 'change', (e) => { stockSortMode = e.target.checked; renderStock(); });
   on('addProductBtn', 'click', () => editProduct(null));

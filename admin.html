@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css?v=20260927-02">
+<link rel="stylesheet" href="styles.css?v=20261019-1">
 </head>
 <body>
 
@@ -62,7 +62,6 @@
       <button class="tab" data-tab="invoices">🧾 חשבוניות</button>
       <button class="tab" data-tab="demand">🎯 ריכוז לפי דגם</button>
       <button class="tab" data-tab="profit">💰 רווחיות</button>
-      <button class="tab" data-tab="collections">🗂️ קולקציות</button>
       <button class="tab" data-tab="settings">⚙️ הגדרות</button>
     </div>
 
@@ -135,6 +134,7 @@
     <div class="view" id="tab-stock">
       <div class="card">
         <h2>📦 מלאי <span class="grow"></span>
+          <button class="btn ghost sm" id="manageCollectionsBtn">🗂️ ניהול קולקציות ותצוגת לקוח</button>
           <button class="btn ghost sm" id="exportStock">⬇️ ייצוא</button>
           <button class="btn ghost sm" id="newReturnStock">🔄 קליטת חזרה</button>
           <button class="btn sm" id="addProductBtn">➕ דגם</button>
@@ -159,10 +159,22 @@
           <span id="bulkCount">0 דגמים נבחרו</span>
           <span class="grow"></span>
           <button class="btn sm" id="bulkPrices">💲 הגדרת מחירים</button>
+          <button class="btn ghost sm" id="bulkCollection">🗂️ העברה לקולקציה</button>
           <button class="btn ghost sm" id="bulkClear">ניקוי הבחירה</button>
         </div>
         <div id="stockList"></div>
       </div>
+      <details class="card fold" id="stockCollections">
+        <summary><span class="ttl">🗂️ קולקציות ותצוגת הקטלוג ללקוח</span></summary>
+        <div class="fold-body">
+          <div id="catalogDisplaySettings"></div>
+          <div class="row" style="margin:1rem 0"><b>ניהול הקולקציות</b><span class="grow"></span>
+            <button class="btn sm" id="addCollectionBtn">➕ קולקציה</button>
+          </div>
+          <div class="note small">גרור לשינוי הסדר. ניתן להסתיר קולקציה בעריכה ולייבא אליה דגמים מהמלאי או מרשימת דגמים באקסל.</div>
+          <div id="collectionList" class="sortable"></div>
+        </div>
+      </details>
     </div>
 
     <!-- ══ חזרות ══ -->
@@ -220,17 +232,6 @@
         <div id="profitMonthly"></div>
         <h3 class="bold" style="margin:1.4rem 0 .6rem">רווח לפי דגם</h3>
         <div id="profitByModel"></div>
-      </div>
-    </div>
-
-    <!-- ══ קולקציות ══ -->
-    <div class="view" id="tab-collections">
-      <div class="card">
-        <h2>🗂️ קולקציות <span class="grow"></span>
-          <button class="btn sm" id="addCollectionBtn">➕ קולקציה</button>
-        </h2>
-        <div class="note small">✋ גרור לשינוי סדר הלשוניות אצל הלקוחות.</div>
-        <div id="collectionList" class="sortable"></div>
       </div>
     </div>
 
@@ -423,6 +424,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="admin.js?v=20260927-03"></script>
+<script type="module" src="admin.js?v=20261019-1"></script>
 </body>
 </html>

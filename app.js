@@ -10,10 +10,12 @@ import {
   loadProfile, canOrder, needsProfile, sortSizes, statusChip, debounce,
   ORDER_STATUS, exportXlsx,
 } from './lib.js';
+import { catalogCollectionVisible } from './catalog-display.js?v=20261019-1';
 
 let authMode = 'signin';
 let isGuest = false;
 let activeCollection = null;
+let catalogDisplay = { mode: 'collections' };
 let allProducts = [];
 let byModel = {};
 let myOrders = [];
@@ -342,6 +344,9 @@ async function loadCatalog(silent = false) {
 
   try {
     let cols, prods, available;
+    const { data: preferences, error: preferencesError } = await sb.rpc('get_catalog_preferences');
+    if (preferencesError) throw preferencesError;
+    catalogDisplay = preferences || { mode: 'collections' };
     if (isGuest) {
       const { data, error } = await sb.rpc('get_guest_catalog');
       if (error) throw error;
@@ -363,7 +368,7 @@ async function loadCatalog(silent = false) {
       cols = c; prods = p; available = a;
     }
 
-    state.collections = cols || [];
+    state.collections = (cols || []).filter((c) => catalogDisplay.mode !== 'single' || c.id === catalogDisplay.collection_id);
     const availableByProduct = new Map();
     for (const row of available || []) {
       if (!availableByProduct.has(row.product_id)) availableByProduct.set(row.product_id, {});
@@ -372,7 +377,7 @@ async function loadCatalog(silent = false) {
         : Number(row.qty || 0);
     }
     // המלאי הזמין כבר מקזז יחידות שתפוסות בהזמנות ממתינות אחרות.
-    allProducts = (prods || []).map((p) => ({
+    allProducts = (prods || []).filter((p) => catalogCollectionVisible(p.collection_id, cols || [], catalogDisplay)).map((p) => ({
       ...p,
       stock: Object.fromEntries(Object.entries(availableByProduct.get(p.id) || {})
         .filter(([, qty]) => qty > 0)),
@@ -409,6 +414,7 @@ async function loadCatalog(silent = false) {
 
 function renderTabs() {
   const tabs = $('collectionTabs');
+  if (catalogDisplay.mode === 'all') { activeCollection = null; tabs.innerHTML = ''; return; }
   if (!state.collections.length) { tabs.innerHTML = ''; return; }
 
   if (!activeCollection || !state.collections.some((c) => c.id === activeCollection)) {
@@ -435,7 +441,7 @@ function renderTabs() {
 function visibleProducts() {
   const q = $('searchInput').value.trim().toLowerCase();
   return allProducts.filter((p) => {
-    if (p.collection_id !== activeCollection) return false;
+    if (catalogDisplay.mode !== 'all' && p.collection_id !== activeCollection) return false;
     if (!q) return true;
     return p.model.toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q);
   });

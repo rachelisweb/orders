@@ -1298,7 +1298,9 @@ tr.short td, tr.short { background: #fffbeb; }
 .order-invoice-actions { margin: -.1rem 0 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border); }
 
 .archive-tools { display:flex; gap:.55rem; margin-bottom:.8rem; align-items:center; }
-.archive-tools > input[type="search"] { flex:1; min-width:0; }
+.archive-tools > input[type="search"] { flex:1; min-width:0; direction:rtl; text-align:right; }
+.collection-import-list .setting-check { padding:.5rem; border-bottom:1px solid var(--border-2); }
+#collectionList .sort-row { flex-wrap:wrap; }
 .archive-filter-menu { position:relative; flex:none; }
 .archive-filter-menu > summary { list-style:none; width:48px; min-width:48px; padding:.55rem; position:relative; cursor:pointer; }
 .archive-filter-menu > summary::-webkit-details-marker { display:none; }

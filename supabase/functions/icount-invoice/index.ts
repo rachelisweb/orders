@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { allocationTaxIdError } from '../../../invoice-policy.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -571,7 +572,8 @@ Deno.serve(async (req) => {
 
       const clientName = String(body?.client_name || '').trim().slice(0, 200);
       if (!clientName) return jsonResponse({ ok: false, error: 'חסר שם לקוח לחשבונית' }, 400);
-      const vatId = String(body?.vat_id || '').replace(/\D/g, '').slice(0, 20);
+      const rawVatId = String(body?.vat_id || '');
+      const vatId = rawVatId.replace(/\D/g, '').slice(0, 20);
       const email = String(body?.email || '').trim().slice(0, 254);
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonResponse({ ok: false, error: 'כתובת המייל אינה תקינה' }, 400);
       const address = String(body?.address || '').trim().slice(0, 500);
@@ -586,6 +588,8 @@ Deno.serve(async (req) => {
         return jsonResponse({ ok: false, error: 'ההנחה אינה תקינה' }, 400);
       }
       const beforeVat = round2(subtotal - discount);
+      const allocationError = allocationTaxIdError('invoice', beforeVat, rawVatId);
+      if (allocationError) return jsonResponse({ ok: false, error: allocationError }, 409);
       const vat = round2(beforeVat * VAT_PERCENT / 100);
       const totalWithVat = round2(beforeVat + vat);
       const normalized = {
@@ -813,6 +817,8 @@ Deno.serve(async (req) => {
     if (!['invoice', 'receipt', 'invrec'].includes(doctype)) {
       return jsonResponse({ ok: false, error: 'סוג המסמך אינו נתמך' }, 400);
     }
+    const allocationError = allocationTaxIdError(doctype, beforeVat, customer.tax_id);
+    if (allocationError) return jsonResponse({ ok: false, error: allocationError }, 409);
     const documentTitle = doctype === 'receipt' ? 'קבלה'
       : doctype === 'invrec' ? 'חשבונית מס + קבלה' : 'חשבונית מס';
     const token = Deno.env.get('ICOUNT_API_TOKEN') || '';
