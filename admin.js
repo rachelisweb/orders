@@ -6069,6 +6069,8 @@ function renderSettings() {
     } catch (err) { toast(friendlyError(err), true); }
     finally { $('setSave').disabled = false; }
   });
+
+  loadShopifySyncStatus();
 }
 
 function addEmail() {
@@ -6148,39 +6150,120 @@ async function sendTestMail() {
 // ============================================================
 // סנכרון שופיפיי
 // ============================================================
+const SYNC_TOPICS = { 'orders/create': 'מכירה באתר', 'refunds/create': 'החזרה באתר', 'orders/cancelled': 'ביטול באתר' };
+
+async function loadShopifySyncStatus() {
+  const box = $('syncStatus');
+  if (!box) return;
+  try {
+    const { data, error } = await sb.rpc('get_shopify_sync_status');
+    if (error) throw error;
+    const st = data.state || {};
+    const res = st.last_result || {};
+    const problems = (res.errors?.length || 0) + (res.fatal ? 1 : 0);
+    const events = (data.events || []).map((e) => {
+      const lines = (e.applied || []).map((l) => `${esc(l.sku)} ×${l.qty}${l.short ? ` <b>(חסרו ${l.short} במלאי)</b>` : ''}`);
+      const missing = (e.unmatched || []).map((l) => `${esc(l.sku || 'ללא מק"ט')} ×${l.qty} — לא נמצא באפליקציה`);
+      return `<li>${fmtDate(e.created_at)} · ${SYNC_TOPICS[e.topic] || esc(e.topic)} ${esc(e.order_name || '')}
+        ${e.direction < 0 ? '➖' : '➕'} ${[...lines, ...missing].join(', ') || esc(e.skipped_reason || '—')}</li>`;
+    }).join('');
+    box.innerHTML = `<div class="note small ${problems || data.stuck?.length ? 'warn' : ''}">
+      סנכרון אוטומטי: <b>${data.auto ? 'פעיל ✅' : 'כבוי ⏸️'}</b>
+      · ממתינים לסנכרון: <b>${data.queued ?? 0}</b>
+      ${st.last_run_at ? `<br>ריצה אחרונה: ${fmtDate(st.last_run_at)} — עודכנו ${res.updated ?? 0}, נוצרו ${res.created ?? 0}${problems ? `, <b>שגיאות ${problems}</b>` : ''}` : ''}
+      ${st.last_success_at ? `<br>הצלחה אחרונה: ${fmtDate(st.last_success_at)}` : ''}
+      ${res.fatal ? `<br>❌ ${esc(res.fatal)}` : ''}
+      ${(res.errors || []).slice(0, 5).map((x) => `<br>❌ ${esc(x)}`).join('')}
+      ${data.stuck?.length ? `<br><br><b>דגמים שנכשלו 5 פעמים ולא ינוסו שוב עד השינוי הבא:</b><br>
+        ${data.stuck.map((x) => `${esc(x.model)} — ${esc(x.error || '')}`).join('<br>')}` : ''}
+      ${events ? `<br><br><b>תנועות אחרונות מהאתר:</b><ul style="margin:.3rem 0 0;padding-inline-start:1.2rem">${events}</ul>` : ''}
+    </div>`;
+  } catch (err) {
+    box.innerHTML = `<div class="note danger small">לא ניתן לטעון את מצב הסנכרון: ${esc(friendlyError(err))}</div>`;
+  }
+}
+
+async function invokeShopifySync(body) {
+  const { data, error } = await sb.functions.invoke('shopify-sync', { body });
+  if (error) {
+    // שגיאת HTTP — מנסים להציג את ההודעה שהפונקציה החזירה
+    const detail = await error.context?.json?.().catch(() => null);
+    throw new Error(detail?.error || error.message);
+  }
+  if (data?.ok === false) throw new Error(data.error || 'הסנכרון נכשל');
+  return data;
+}
+
 async function syncShopify() {
   const btn = $('syncShopifyBtn');
   const out = $('syncResult');
-  if (!confirm('לסנכרן את המלאי והמחירים לשופיפיי?\n\nזה עשוי לקחת דקה או שתיים.')) return;
+  if (!confirm('לסנכרן עכשיו את כל הדגמים לשופיפיי?
+
+מלאי, מחיר לקוח קצה וקולקציה. זה עשוי לקחת דקה או שתיים.')) return;
 
   btn.disabled = true;
   btn.textContent = '⏳ מסנכרן…';
   out.innerHTML = '<div class="loading"><div class="spinner"></div>מסנכרן מול שופיפיי…</div>';
 
   try {
-    const { data, error } = await sb.functions.invoke('shopify-sync', { body: {} });
-    if (error) throw error;
-
-    if (data?.ok === false) throw new Error(data.error || 'הסנכרון נכשל');
-
+    const data = await invokeShopifySync({ mode: 'full' });
+    if (data.busy) {
+      out.innerHTML = '<div class="note">⏳ סנכרון אוטומטי רץ כרגע — כל הדגמים נכנסו לתור וימשיכו בריצה הבאה.</div>';
+      return;
+    }
     out.innerHTML = `<div class="note ${data.errors?.length ? 'warn' : ''}">
       ✅ הסנכרון הושלם ב-${data.seconds || '?'} שניות<br>
       נוצרו: <b>${data.created ?? 0}</b> · עודכנו: <b>${data.updated ?? 0}</b> · ללא שינוי: <b>${data.unchanged ?? 0}</b>
+      · דולגו: <b>${data.skipped ?? 0}</b>${data.remaining ? ` · ממשיכים בריצה הבאה: <b>${data.remaining}</b>` : ''}
       ${data.errors?.length ? `<br><br><b>שגיאות (${data.errors.length}):</b><br>
         ${data.errors.slice(0, 10).map((x) => esc(x)).join('<br>')}` : ''}
+      ${data.warnings?.length ? `<br><br><b>לתשומת לב (${data.warnings.length}):</b><br>
+        ${data.warnings.slice(0, 15).map((x) => esc(x)).join('<br>')}` : ''}
     </div>`;
     toast('הסנכרון הושלם');
   } catch (err) {
-    out.innerHTML = `<div class="note danger">
-      ❌ ${esc(friendlyError(err))}
-      <br><br>אם הפונקציה עוד לא נפרסה, הרץ:
-      <br><code>supabase functions deploy shopify-sync</code>
-      <br>וודא שהוגדרו הסודות <code>SHOPIFY_CLIENT_ID</code> ו-<code>SHOPIFY_CLIENT_SECRET</code>.
-    </div>`;
+    out.innerHTML = `<div class="note danger">❌ ${esc(friendlyError(err))}</div>`;
     toast(friendlyError(err), true);
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔄 סנכרן לשופיפיי עכשיו';
+    btn.textContent = '🔄 סנכרן הכל עכשיו';
+    loadShopifySyncStatus();
+  }
+}
+
+async function syncShopifyDryRun() {
+  const btn = $('syncDryRunBtn');
+  const out = $('syncResult');
+  btn.disabled = true;
+  out.innerHTML = '<div class="loading"><div class="spinner"></div>בודק מול שופיפיי (בלי לשנות כלום)…</div>';
+  try {
+    const data = await invokeShopifySync({ mode: 'full', dryRun: true });
+    const s = data.summary || {};
+    const rows = (data.changes || []).map((c) => {
+      const parts = [];
+      if (c.action === 'create') parts.push(`ייווצר כטיוטה (${esc(c.create?.price)} ₪, ${c.create?.units ?? 0} יח')`);
+      if (c.reason) parts.push(esc(c.reason));
+      if (c.stock?.length) parts.push('מלאי: ' + c.stock.map((x) => `${x.size} ${x.from}→${x.to}`).join(', '));
+      if (c.price) parts.push(`מחיר: ${esc(c.price.from)}→${esc(c.price.to)}`);
+      if (c.tagsAdd) parts.push('קולקציה +' + c.tagsAdd.map(esc).join(', '));
+      if (c.tagsRemove) parts.push('קולקציה −' + c.tagsRemove.map(esc).join(', '));
+      if (c.skuFixes) parts.push('מק"ט: ' + c.skuFixes.map((x) => `${esc(x.from)}→${esc(x.to)}`).join(', '));
+      if (c.warnings) parts.push('⚠️ ' + c.warnings.map(esc).join(' · '));
+      return `<tr>${td('דגם', esc(c.model), 'bold')}${td('באתר', esc(c.title || '—'), 'muted small')}${td('שינוי', parts.join('<br>'), 'small')}</tr>`;
+    }).join('');
+    out.innerHTML = `<div class="note">
+      🔍 בדיקה בלבד — שום דבר לא שונה.<br>
+      יעודכנו: <b>${s.update ?? 0}</b> · ייווצרו: <b>${s.create ?? 0}</b> · ללא שינוי: <b>${s.unchanged ?? 0}</b>
+      · ידולגו: <b>${s.skipped ?? 0}</b> · שינויי מלאי: <b>${s.stockChanges ?? 0}</b>
+      ${s.missingCollections?.length ? `<br>⚠️ אין באתר קולקציה חכמה לתגית: ${s.missingCollections.map(esc).join(', ')}` : ''}
+      ${s.shopifyOnly?.length ? `<br>מוצרים שקיימים רק באתר (לא נוגעים בהם): ${s.shopifyOnly.map(esc).join(' · ')}` : ''}
+    </div>
+    ${rows ? `<div class="table-wrap"><table class="responsive"><thead><tr><th>דגם</th><th>באתר</th><th>שינוי</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>` : ''}`;
+  } catch (err) {
+    out.innerHTML = `<div class="note danger">❌ ${esc(friendlyError(err))}</div>`;
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -6526,7 +6609,7 @@ function wire() {
        '#newOrderSubmit', '#addOrderModelSave', '#uSave', '#discSave', '#retDiscSave', '#payableSave', '#customPriceSave', '#admNotesSave', '#icountCreate', '#icountRefundCreate', '#flexInvoiceCreate',
       '#ivSave', '#futureCollectionsSave', '#releaseFutureOrders', '#archiveBucket', '#mgSave',
       '#pSave', '#pImagePick', '#cSave', '#bkSave', '#rtSave', '#setSave', '#meSave', '#profitStartSave', '#profitExcludedSave',
-      '#profitStartClear', '#syncShopifyBtn', '#testMailBtn', '#catalogDisplaySave', '#collectionImportSave',
+      '#profitStartClear', '#syncShopifyBtn', '#syncDryRunBtn', '#testMailBtn', '#catalogDisplaySave', '#collectionImportSave',
     ].join(',');
     document.addEventListener('click', (e) => {
       if (!e.target.closest(blockedClick)) return;
@@ -6598,6 +6681,7 @@ function wire() {
   on('testMailBtn', 'click', sendTestMail);
   on('testMailTo', 'keydown', (e) => { if (e.key === 'Enter') sendTestMail(); });
   on('syncShopifyBtn', 'click', syncShopify);
+  on('syncDryRunBtn', 'click', syncShopifyDryRun);
 
   on('exportOrdersFlat', 'click', exportOrdersFlat);
   on('newOrderBtn', 'click', openNewOrder);

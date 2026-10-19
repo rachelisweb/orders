@@ -268,11 +268,14 @@
       <div class="card">
         <h2>🔄 סנכרון שופיפיי</h2>
         <div class="note small">
-          מעלה לשופיפיי את המלאי ואת <b>מחיר לקוח קצה</b> של כל דגם פעיל.
+          האפליקציה היא מקור האמת: כל שינוי במלאי, בהזמנה סיטונאית פתוחה, ב<b>מחיר לקוח קצה</b>
+          או בקולקציה (קיץ/חורף) עולה לאתר תוך כדקה. מכירה באתר יורדת מהמלאי כאן.
           דגם שאינו קיים בחנות נוצר כטיוטה.
         </div>
+        <div id="syncStatus" style="margin:.6rem 0"></div>
         <div class="row">
-          <button class="btn lg" id="syncShopifyBtn">🔄 סנכרן לשופיפיי עכשיו</button>
+          <button class="btn lg" id="syncShopifyBtn">🔄 סנכרן הכל עכשיו</button>
+          <button class="btn" id="syncDryRunBtn">🔍 בדיקה — מה היה משתנה</button>
         </div>
         <div id="syncResult" style="margin-top:.9rem"></div>
       </div>
@@ -424,6 +427,6 @@
 </div>
 
 <script src="config.js"></script>
-<script type="module" src="admin.js?v=20261019-1"></script>
+<script type="module" src="admin.js?v=20261019-2"></script>
 </body>
 </html>
