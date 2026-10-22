@@ -405,7 +405,7 @@ async function addImage(shop: Shopify, productId: string, url: string, alt: stri
   const data = await shop.gql(`
     mutation AddImage($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
       productUpdate(product: $product, media: $media) {
-        product { media(last: 1) { nodes { id } } }
+        product { media(first: 1, reverse: true) { nodes { id } } }
         userErrors { field message }
       }
     }`, { product: { id: productId }, media: [{ originalSource: url, mediaContentType: 'IMAGE', alt }] });
