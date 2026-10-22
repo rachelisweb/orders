@@ -208,6 +208,10 @@ function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>
 
   if (!shopifyProduct) {
     if (!p.is_active) return plan;
+    if (p.no_create) {
+      plan.reason = 'הוחרג — נמחק מהאתר בכוונה ולא נוצר מחדש';
+      return plan;
+    }
     // דגם בלי מלאי זמין לא נוצר באתר — גם אם נמחק משם. יחזור כטיוטה רק כשיהיה לו מלאי.
     const units = Object.values(p.stock as Record<string, number>).reduce((a, b) => a + b, 0);
     if (units <= 0) {
@@ -403,6 +407,8 @@ async function loadAppProducts(sb: SupabaseClient) {
 
   const { data: links } = await sb.from('shopify_product_links').select('product_id, shopify_product_id');
   const linkMap = new Map((links || []).map((l: any) => [l.product_id, l.shopify_product_id]));
+  const { data: blocked } = await sb.from('shopify_no_create').select('product_id');
+  const noCreate = new Set((blocked || []).map((b: any) => b.product_id));
 
   return (rows || []).map((r: any) => ({
     id: r.id,
@@ -413,6 +419,7 @@ async function loadAppProducts(sb: SupabaseClient) {
     season_tag: r.collections?.shopify_tag ? String(r.collections.shopify_tag).toLowerCase() : null,
     stock: stock.get(r.id) || {},
     link: linkMap.get(r.id) || null,
+    no_create: noCreate.has(r.id),
   }));
 }
 
