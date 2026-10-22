@@ -31,8 +31,11 @@ const CORS = {
 
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL', '4XL', '5XL'];
 const SIZE_RE = /^(.+)-(XS|S|M|L|XL|XXL|3XL|4XL|5XL)$/i;
-// דגם שהשם שלו כולל תיאור ("2601 סרפן קטיפה…") — המק"ט באתר בנוי מהקוד שבתחילתו
+// דגם שהשם שלו כולל תיאור ("2601 סרפן קטיפה…", "חצאית טאפט שחורה 3611") —
+// המק"ט באתר בנוי מהספרות שבשם: בתחילתו, בסופו או באמצעו
 const LEADING_CODE_RE = /^([0-9]{3,6}[A-Z]?(?:-[0-9]+)?)\s/i;
+const TRAILING_CODE_RE = /\s([0-9]{3,6}[A-Z]?(?:-[0-9]+)?)$/i;
+const ANY_CODE_RE = /(?:^|\s)([0-9]{3,6}[A-Z]?(?:-[0-9]+)?)(?=\s|$)/i;
 const WEBHOOK_TOPICS = ['ORDERS_CREATE', 'REFUNDS_CREATE', 'ORDERS_CANCELLED'];
 
 // עוצרים לפני מגבלת הזמן של ה-Edge Function; מה שנשאר בתור ימשיך בריצה הבאה
@@ -129,12 +132,42 @@ async function loadCatalog(shop: Shopify) {
   return { products, locationId: location.id as string, smartTags };
 }
 
-// בסיס המק"ט באתר: שם הדגם כשהוא קוד נקי, אחרת הקוד שבתחילת השם
-function skuBase(model: string): string | null {
-  const m = model.trim();
+// שם דגם עם טאבים/רווחים כפולים (מהעתקה מאקסל) → רווח אחד
+function cleanName(model: string): string {
+  return model.replace(/\s+/g, ' ').trim();
+}
+
+// הקוד שבשם הדגם: השם כולו כשהוא קוד נקי, אחרת הספרות בתחילת השם, בסופו או באמצעו
+function modelCode(model: string): string | null {
+  const m = cleanName(model);
   if (/^[0-9A-Za-z-]+$/.test(m)) return m.toUpperCase();
-  const c = m.match(LEADING_CODE_RE);
+  const c = m.match(LEADING_CODE_RE) || m.match(TRAILING_CODE_RE) || m.match(ANY_CODE_RE);
   return c ? c[1].toUpperCase() : null;
+}
+
+// בסיס המק"ט של כל דגם. קוד שמשותף לכמה דגמים ("3619 חום…" / "3619 שחור…") מקבל
+// את המילה הראשונה שמבדילה את הדגם מהאחרים ("3619 חום"), כמו "3616 חום" שכבר באתר.
+function assignSkuBases(products: any[]) {
+  const groups = new Map<string, any[]>();
+  for (const p of products) {
+    const code = modelCode(p.model);
+    p.sku_base = code;
+    if (code) groups.set(code, [...(groups.get(code) || []), p]);
+  }
+  for (const [code, group] of groups) {
+    if (group.length < 2) continue;
+    for (const p of group) {
+      const name = cleanName(p.model);
+      if (name.toUpperCase() === code) continue;            // הדגם שהשם שלו הוא הקוד עצמו שומר עליו
+      const words = name.split(' ').filter((w) => w.toUpperCase() !== code);
+      const others = group.filter((o) => o !== p).map((o) => new Set(cleanName(o.model).split(' ')));
+      const distinct = words.find((w) => others.every((set) => !set.has(w)));
+      p.sku_base = distinct ? `${code} ${distinct}`.toUpperCase() : name.toUpperCase();
+    }
+  }
+  const count = new Map<string, number>();
+  for (const p of products) if (p.sku_base) count.set(p.sku_base, (count.get(p.sku_base) || 0) + 1);
+  for (const p of products) p.ambiguous = !!p.sku_base && (count.get(p.sku_base) || 0) > 1;
 }
 
 function variantSize(v: any): string | null {
@@ -161,7 +194,7 @@ type Plan = {
   tagsAdd: string[];
   tagsRemove: string[];
   warnings: string[];
-  create?: { tags: string[]; price: string; stock: Record<string, number>; description: string | null };
+  create?: { tags: string[]; price: string; stock: Record<string, number>; description: string | null; sku: string };
 };
 
 function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>): Plan {
@@ -169,6 +202,7 @@ function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>
     productId: p.id, model: p.model, action: 'none', stock: [], track: [], variantUpdates: [],
     skuFixes: [], tagsAdd: [], tagsRemove: [], warnings: [],
   };
+  // מחיר 0 = עוד לא נקבע: לא דורסים את המחיר באתר, ודגם חדש נוצר כטיוטה במחיר 0
   const price = Number(p.retail_price) > 0 ? Number(p.retail_price).toFixed(2) : null;
   const seasonTag: string | null = p.season_tag || null;
 
@@ -180,23 +214,19 @@ function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>
       plan.reason = 'אין מלאי זמין — לא נוצר באתר';
       return plan;
     }
-    if (!price) {
-      plan.action = 'skip';
-      plan.reason = 'חסר מחיר לקוח קצה — לא נוצר באתר';
-      return plan;
-    }
     if (!p.sku_base) {
       plan.action = 'skip';
-      plan.reason = 'שם הדגם לא מתחיל בקוד דגם — אי אפשר לבנות מק"ט, לא נוצר באתר';
+      plan.reason = 'אין ספרות בשם הדגם — אי אפשר לבנות מק"ט, לא נוצר באתר';
       return plan;
     }
     if (p.ambiguous) {
       plan.action = 'skip';
-      plan.reason = `הקוד ${p.sku_base} משותף לכמה דגמים — יש לקשר ידנית למוצר באתר`;
+      plan.reason = `המק"ט ${p.sku_base} יוצא זהה לדגם אחר — יש לשנות את שם הדגם`;
       return plan;
     }
     plan.action = 'create';
-    plan.create = { tags: seasonTag ? [seasonTag] : [], price, stock: p.stock, description: p.description };
+    plan.create = { tags: seasonTag ? [seasonTag] : [], price: price ?? '0.00', stock: p.stock, description: p.description, sku: p.sku_base };
+    if (!price) plan.warnings.push('מחיר לקוח קצה 0 — נוצר כטיוטה, לא לפרסם לפני עדכון המחיר באפליקציה');
     return plan;
   }
 
@@ -222,7 +252,7 @@ function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>
     const update: { id: string; price?: string; sku?: string } = { id: v.id };
     // מק"ט מתוקן רק כשהדגם שונה שם באפליקציה (הבסיס הקיים לא מתאים לאף שם מוכר)
     const base = v.sku?.match(SIZE_RE)?.[1]?.toUpperCase();
-    if (base && base !== p.model.toUpperCase() && base !== p.sku_base && p.sku_base) {
+    if (base && base !== cleanName(p.model).toUpperCase() && base !== p.sku_base && p.sku_base) {
       update.sku = `${p.sku_base}-${size}`;
       plan.skuFixes.push({ from: v.sku, to: update.sku });
     }
@@ -267,7 +297,7 @@ async function applyPlan(shop: Shopify, plan: Plan, locationId: string, p: any):
         }
       }`, {
       input: {
-        title: `דגם ${plan.model}`,
+        title: `דגם ${cleanName(plan.model)}`,
         descriptionHtml: c.description ? `<p>${escapeHtml(c.description)}</p>` : undefined,
         status: 'DRAFT',                        // נשאר טיוטה עד שמפרסמים ידנית בשופיפיי
         tags: c.tags,
@@ -381,7 +411,6 @@ async function loadAppProducts(sb: SupabaseClient) {
     retail_price: r.retail_price,
     is_active: r.is_active,
     season_tag: r.collections?.shopify_tag ? String(r.collections.shopify_tag).toLowerCase() : null,
-    sku_base: skuBase(String(r.model)),
     stock: stock.get(r.id) || {},
     link: linkMap.get(r.id) || null,
   }));
@@ -395,7 +424,7 @@ async function loadSeasonTags(sb: SupabaseClient) {
   return tags;
 }
 
-// קישור שמור → מק"ט זהה לשם הדגם → מק"ט לפי הקוד שבתחילת השם (רק כשהקוד חד-משמעי)
+// קישור שמור → מק"ט זהה לשם הדגם → מק"ט לפי בסיס המק"ט שנגזר מהספרות בשם
 function matchShopifyProducts(catalog: any[], appProducts: any[]) {
   const byId = new Map<string, any>();
   const byBase = new Map<string, any>();
@@ -406,18 +435,12 @@ function matchShopifyProducts(catalog: any[], appProducts: any[]) {
       if (m && !byBase.has(m[1].toUpperCase())) byBase.set(m[1].toUpperCase(), sp);
     }
   }
-  const baseCount = new Map<string, number>();
-  for (const p of appProducts) {
-    for (const key of new Set([p.model.toUpperCase(), p.sku_base].filter(Boolean))) {
-      baseCount.set(key, (baseCount.get(key) || 0) + 1);
-    }
-  }
-  for (const p of appProducts) p.ambiguous = !!p.sku_base && (baseCount.get(p.sku_base) || 0) > 1;
+  assignSkuBases(appProducts);
   return (p: any) => {
     if (p.link && byId.has(p.link)) return byId.get(p.link);
-    const exact = byBase.get(p.model.toUpperCase());
+    const exact = byBase.get(p.model.toUpperCase()) || byBase.get(cleanName(p.model).toUpperCase());
     if (exact) return exact;
-    if (p.sku_base && baseCount.get(p.sku_base) === 1) return byBase.get(p.sku_base) || null;
+    if (p.sku_base && !p.ambiguous) return byBase.get(p.sku_base) || null;
     return null;
   };
 }
@@ -435,7 +458,7 @@ function describe(plan: Plan) {
     tagsRemove: plan.tagsRemove.length ? plan.tagsRemove : undefined,
     untracked: plan.track.length || undefined,
     warnings: plan.warnings.length ? plan.warnings : undefined,
-    create: plan.create ? { price: plan.create.price, tags: plan.create.tags, units: Object.values(plan.create.stock).reduce((a, b) => a + b, 0) } : undefined,
+    create: plan.create ? { sku: plan.create.sku, price: plan.create.price, tags: plan.create.tags, units: Object.values(plan.create.stock).reduce((a, b) => a + b, 0) } : undefined,
   };
 }
 
