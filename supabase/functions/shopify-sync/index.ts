@@ -174,6 +174,12 @@ function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>
 
   if (!shopifyProduct) {
     if (!p.is_active) return plan;
+    // דגם בלי מלאי זמין לא נוצר באתר — גם אם נמחק משם. יחזור כטיוטה רק כשיהיה לו מלאי.
+    const units = Object.values(p.stock as Record<string, number>).reduce((a, b) => a + b, 0);
+    if (units <= 0) {
+      plan.reason = 'אין מלאי זמין — לא נוצר באתר';
+      return plan;
+    }
     if (!price) {
       plan.action = 'skip';
       plan.reason = 'חסר מחיר לקוח קצה — לא נוצר באתר';
