@@ -98,6 +98,7 @@ query Catalog($cursor: String) {
     pageInfo { hasNextPage endCursor }
     nodes {
       id title status tags
+      mediaCount { count }
       variants(first: 12) {
         nodes {
           id sku price inventoryQuantity
@@ -194,6 +195,8 @@ type Plan = {
   tagsAdd: string[];
   tagsRemove: string[];
   warnings: string[];
+  addImage?: string;
+  addedMediaId?: string | null;
   create?: { tags: string[]; price: string; stock: Record<string, number>; description: string | null; sku: string };
 };
 
@@ -230,6 +233,7 @@ function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>
     }
     plan.action = 'create';
     plan.create = { tags: seasonTag ? [seasonTag] : [], price: price ?? '0.00', stock: p.stock, description: p.description, sku: p.sku_base };
+    if (p.image_url) plan.addImage = p.image_url;
     if (!price) plan.warnings.push('מחיר לקוח קצה 0 — נוצר כטיוטה, לא לפרסם לפני עדכון המחיר באפליקציה');
     return plan;
   }
@@ -284,7 +288,14 @@ function planProduct(p: any, shopifyProduct: any | null, seasonTags: Set<string>
     }
   }
 
-  const changed = plan.stock.length || plan.variantUpdates.length || plan.tagsAdd.length || plan.tagsRemove.length;
+  // תמונה מהאפליקציה רק למוצר שאין בו תמונות שהועלו באתר (כל התמונות שלו הגיעו מהאפליקציה, או שאין בכלל)
+  const appImages: Set<string> = p.app_images;
+  const mediaCount = Number(shopifyProduct.mediaCount?.count ?? 0);
+  if (p.is_active && p.image_url && !appImages.has(p.image_url) && mediaCount <= appImages.size) {
+    plan.addImage = p.image_url;
+  }
+
+  const changed = plan.stock.length || plan.variantUpdates.length || plan.tagsAdd.length || plan.tagsRemove.length || plan.addImage;
   plan.action = changed ? 'update' : 'none';
   return plan;
 }
@@ -317,7 +328,9 @@ async function applyPlan(shop: Shopify, plan: Plan, locationId: string, p: any):
       },
     });
     userErrors(data.productSet, 'יצירת מוצר');
-    return data.productSet.product.id;
+    const createdId = data.productSet.product.id;
+    if (plan.addImage) plan.addedMediaId = await addImage(shop, createdId, plan.addImage, cleanName(plan.model));
+    return createdId;
   }
 
   if (plan.action !== 'update') return plan.shopifyId ?? null;
@@ -382,7 +395,22 @@ async function applyPlan(shop: Shopify, plan: Plan, locationId: string, p: any):
     });
     userErrors(data.inventorySetQuantities, 'עדכון מלאי');
   }
+
+  if (plan.addImage) plan.addedMediaId = await addImage(shop, plan.shopifyId!, plan.addImage, plan.title || cleanName(plan.model));
   return plan.shopifyId ?? null;
+}
+
+// מוסיף תמונה בסוף הגלריה של המוצר; תמונות קיימות לא משתנות
+async function addImage(shop: Shopify, productId: string, url: string, alt: string): Promise<string | null> {
+  const data = await shop.gql(`
+    mutation AddImage($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+      productUpdate(product: $product, media: $media) {
+        product { media(last: 1) { nodes { id } } }
+        userErrors { field message }
+      }
+    }`, { product: { id: productId }, media: [{ originalSource: url, mediaContentType: 'IMAGE', alt }] });
+  userErrors(data.productUpdate, 'הוספת תמונה');
+  return data.productUpdate.product?.media?.nodes?.[0]?.id ?? null;
 }
 
 function escapeHtml(s: string) {
@@ -392,7 +420,7 @@ function escapeHtml(s: string) {
 // ── נתוני האפליקציה ─────────────────────────────────────────
 async function loadAppProducts(sb: SupabaseClient) {
   const { data: rows, error } = await sb.from('products')
-    .select('id, model, description, retail_price, is_active, collections(shopify_tag)')
+    .select('id, model, description, retail_price, is_active, image_url, collections(shopify_tag)')
     .order('model');
   if (error) throw error;
 
@@ -409,6 +437,12 @@ async function loadAppProducts(sb: SupabaseClient) {
   const linkMap = new Map((links || []).map((l: any) => [l.product_id, l.shopify_product_id]));
   const { data: blocked } = await sb.from('shopify_no_create').select('product_id');
   const noCreate = new Set((blocked || []).map((b: any) => b.product_id));
+  const { data: uploaded } = await sb.from('shopify_app_images').select('product_id, image_url');
+  const appImages = new Map<string, Set<string>>();
+  for (const u of uploaded || []) {
+    if (!appImages.has(u.product_id)) appImages.set(u.product_id, new Set());
+    appImages.get(u.product_id)!.add(u.image_url);
+  }
 
   return (rows || []).map((r: any) => ({
     id: r.id,
@@ -420,6 +454,8 @@ async function loadAppProducts(sb: SupabaseClient) {
     stock: stock.get(r.id) || {},
     link: linkMap.get(r.id) || null,
     no_create: noCreate.has(r.id),
+    image_url: r.image_url ? String(r.image_url).trim() : null,
+    app_images: appImages.get(r.id) || new Set<string>(),
   }));
 }
 
@@ -464,6 +500,7 @@ function describe(plan: Plan) {
     tagsAdd: plan.tagsAdd.length ? plan.tagsAdd : undefined,
     tagsRemove: plan.tagsRemove.length ? plan.tagsRemove : undefined,
     untracked: plan.track.length || undefined,
+    image: plan.addImage,
     warnings: plan.warnings.length ? plan.warnings : undefined,
     create: plan.create ? { sku: plan.create.sku, price: plan.create.price, tags: plan.create.tags, units: Object.values(plan.create.stock).reduce((a, b) => a + b, 0) } : undefined,
   };
@@ -617,6 +654,11 @@ Deno.serve(async (req) => {
         try {
           const plan = planProduct(p, find(p), seasonTags);
           const shopifyId = await applyPlan(shop, plan, catalog.locationId, p);
+          if (plan.addImage && shopifyId) {
+            await sb.from('shopify_app_images').upsert({
+              product_id: p.id, image_url: plan.addImage, shopify_media_id: plan.addedMediaId ?? null,
+            });
+          }
           if (shopifyId && shopifyId !== p.link) {
             await sb.from('shopify_product_links')
               .upsert({ product_id: p.id, shopify_product_id: shopifyId, linked_at: new Date().toISOString() });

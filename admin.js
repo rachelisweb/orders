@@ -6246,6 +6246,7 @@ async function syncShopifyDryRun() {
       if (c.tagsAdd) parts.push('קולקציה +' + c.tagsAdd.map(esc).join(', '));
       if (c.tagsRemove) parts.push('קולקציה −' + c.tagsRemove.map(esc).join(', '));
       if (c.skuFixes) parts.push('מק"ט: ' + c.skuFixes.map((x) => `${esc(x.from)}→${esc(x.to)}`).join(', '));
+      if (c.image) parts.push('🖼️ תתווסף התמונה מהאפליקציה');
       if (c.warnings) parts.push('⚠️ ' + c.warnings.map(esc).join(' · '));
       return `<tr>${td('דגם', esc(c.model), 'bold')}${td('באתר', esc(c.title || '—'), 'muted small')}${td('שינוי', parts.join('<br>'), 'small')}</tr>`;
     }).join('');
