@@ -1562,3 +1562,31 @@ td.pick, th.pick { width: 38px; text-align: center; }
   .product-image-source{grid-template-columns:1fr}
   .product-image-pick{width:100%}
 }
+
+/* ── התקנת האפליקציה (pwa.js) ─────────────────────────── */
+/* .btn ו-.menu button קובעים display, ולכן hidden לבדו לא היה מסתיר אותם */
+[data-pwa-install][hidden], [data-pwa-banner][hidden] { display: none !important; }
+.install-auth-btn { margin-top: 1rem; }
+.install-banner {
+  display: flex; align-items: center; gap: .6rem;
+  background: #faf7f2; color: var(--text);
+  border-bottom: 1px solid #c9a96e;
+  padding: .45rem .75rem;
+  font-size: .88rem; font-weight: 700;
+}
+.install-banner img { width: 32px; height: 32px; border-radius: 8px; flex: none; }
+.install-banner .txt { flex: 1; min-width: 0; line-height: 1.35; }
+.install-x {
+  flex: none; width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; border-radius: 8px;
+  color: var(--muted); font-size: 1rem;
+}
+.install-x:hover { background: rgb(15 23 42 / .06); }
+.install-help { max-width: 380px; text-align: center; padding: 1.5rem 1.25rem 1.25rem; }
+.install-help img { width: 64px; height: 64px; border-radius: 14px; margin: 0 auto .6rem; display: block; }
+.install-help h3 { font-size: 1.15rem; font-weight: 800; margin-bottom: .8rem; }
+.install-help ol { text-align: start; padding-inline-start: 1.25rem; margin: 0 0 1.1rem; line-height: 1.6; font-size: .95rem; }
+.install-help li + li { margin-top: .45rem; }
+.install-help .share-ico { vertical-align: -3px; color: var(--accent); }
+@media print { .install-banner { display: none !important; } }

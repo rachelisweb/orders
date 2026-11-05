@@ -8,7 +8,11 @@
 <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700;800&display=swap">
-<link rel="stylesheet" href="styles.css?v=20261019-1">
+<link rel="stylesheet" href="styles.css?v=20261105-1">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="רחליס">
 </head>
 <body>
 
@@ -54,6 +58,7 @@
       <div class="center" style="margin-top:1rem">
         <button class="btn ghost sm" id="authToggle">אין לי חשבון — הרשמה</button>
       </div>
+      <button class="btn ghost block install-auth-btn" type="button" data-pwa-install hidden>📲 התקנת האפליקציה בטלפון</button>
     </div>
   </div>
 </div>
@@ -130,9 +135,17 @@
         </div>
         <button id="navPersonalArea">📋 האזור האישי</button>
         <button id="navAdmin" style="display:none">⚙️ חזרה לניהול</button>
+        <button type="button" data-pwa-install hidden>📲 התקנת האפליקציה</button>
         <button id="navSignout" class="danger">🚪 התנתקות</button>
       </div>
     </div>
+  </div>
+
+  <div class="install-banner" data-pwa-banner hidden>
+    <img src="icons/icon-192.png" alt="" width="32" height="32">
+    <span class="txt">אפשר להתקין את רחליס כאפליקציה בטלפון</span>
+    <button class="btn sm" type="button" data-pwa-install>התקנה</button>
+    <button class="install-x" type="button" data-pwa-dismiss aria-label="סגירת ההצעה">✕</button>
   </div>
 
   <div class="admin-banner" id="previewBanner" style="display:none">
@@ -295,5 +308,6 @@
 
 <script src="config.js"></script>
 <script type="module" src="app.js?v=20261019-1"></script>
+<script src="pwa.js?v=20261105-1"></script>
 </body>
 </html>
