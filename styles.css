@@ -1590,3 +1590,7 @@ td.pick, th.pick { width: 38px; text-align: center; }
 .install-help li + li { margin-top: .45rem; }
 .install-help .share-ico { vertical-align: -3px; color: var(--accent); }
 @media print { .install-banner { display: none !important; } }
+
+/* ── אייקון המותג (במקום האימוג'י 🛍️) ─────────────────── */
+.auth-card .logo .mark-img { display: block; width: 72px; height: 72px; margin: 0 auto .35rem; }
+.header .brand-icon { flex: none; width: 34px; height: 34px; }
