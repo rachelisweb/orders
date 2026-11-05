@@ -10,6 +10,7 @@ import {
 } from './lib.js?v=20260905-2';
 import { allocationTaxIdError } from './invoice-policy.js?v=20261019-1';
 import { uniqueEmails, uniquePhones } from './contact-utils.js?v=20261019-1';
+import { edgeFunctionError } from './edge-function-error.js?v=20261105-refund-errors';
 
 const db = {
   collections: [], products: [], orders: [], customers: [],
@@ -3569,7 +3570,7 @@ async function saveActive(cb) {
   }
 }
 
-function editProduct(id) {
+function editProduct(id, afterSave = null) {
   const p = id ? db.products.find((x) => x.id === id) : null;
 
   modal(p ? `עריכת דגם ${p.model}` : 'דגם חדש', `
@@ -3734,6 +3735,7 @@ function editProduct(id) {
         : 'הדגם נוסף');
       closeModal();
       await loadAll();
+      if (afterSave) await afterSave();
     } catch (err) {
       toast(friendlyError(err), true);
       $('pSave').disabled = false;
@@ -4943,7 +4945,7 @@ const icountDocLabel = (doctype) => ICOUNT_DOC_LABELS[doctype] || 'מסמך';
 async function invokeIcountCustomer(action, payload) {
   if (LOCAL_REVIEW) throw new Error('קישור ל־iCount אינו זמין במצב בדיקה מקומית');
   const { data, error } = await sb.functions.invoke('icount-invoice', { body: { action, ...payload } });
-  if (error) throw error;
+  if (error) throw await edgeFunctionError(error);
   if (!data?.ok) throw new Error(data?.error || 'פעולת iCount נכשלה');
   return data;
 }
@@ -5035,7 +5037,7 @@ async function loadIcountDocumentCapabilities() {
     bank_accounts: [{ id: '1', title: 'חשבון בנק לדוגמה' }],
   };
   const { data, error } = await sb.functions.invoke('icount-invoice', { body: { action: 'health' } });
-  if (error) throw error;
+  if (error) throw await edgeFunctionError(error);
   if (!data?.ok) throw new Error(data?.error || 'לא ניתן לטעון את אפשרויות iCount');
   return data;
 }
@@ -5080,7 +5082,7 @@ async function openIcountInvoicePreview(orderId) {
       const { data, error } = await sb.functions.invoke('icount-invoice', {
         body: { action: 'sync_order_prices', order_id: order.id },
       });
-      if (error) throw error;
+      if (error) throw await edgeFunctionError(error);
       if (!data?.ok) throw new Error(data?.error || 'סנכרון המחירים נכשל');
       await loadAll();
       toast(`סונכרנו מחירים ל-${fmtNum(data.updated_items || 0)} פריטים`);
@@ -5306,7 +5308,7 @@ async function openIcountInvoicePreview(orderId) {
           cheques: needsPayment && $('icountPaymentMethod').value === 'cheques' ? payment.cheques : [],
         },
       });
-      if (error) throw error;
+      if (error) throw await edgeFunctionError(error);
       if (!data?.ok) throw new Error(data?.error || 'הפקת המסמך נכשלה');
       let emailMessage = '';
       try {
@@ -5380,15 +5382,24 @@ async function openIcountRefundPreview(returnId) {
       const { data, error } = await sb.functions.invoke('icount-invoice', {
         body: { action: 'refund_preview', return_id: returnId },
       });
-      if (error) throw error;
+      if (error) throw await edgeFunctionError(error);
       if (!data?.ok) throw new Error(data?.error || 'לא ניתן להכין את חשבונית הזיכוי');
       preview = data.preview;
     }
   } catch (error) {
+    const message = friendlyError(error);
+    const missingModel = message.match(/^לא נמצא מחיר לזיכוי עבור הדגם (.+)$/)?.[1];
+    const missingProduct = missingModel ? productByModel(missingModel) : null;
     modal(`חשבונית זיכוי — חזרה #${returnRow.return_number}`, `
       <div class="note danger-note">לא ניתן להכין את חשבונית הזיכוי.</div>
-      <div class="err-msg show">${esc(friendlyError(error))}</div>
+      <div class="err-msg show">${esc(message)}</div>
+      ${missingProduct ? `
+        <div class="note small">יש להשלים מחיר ${db.customers.find((c) => c.id === returnRow.customer_id)?.price_at_cost ? 'עלות' : 'סיטונאי'} לפני מע״מ בכרטיס הדגם. לאחר השמירה פרטי הזיכוי יחושבו מחדש.</div>
+        <button class="btn block" id="refundFixPrice">עדכון מחיר הדגם ${esc(missingProduct.model)}</button>` : ''}
+      <button class="btn ghost block" id="refundPreviewRetry">ניסיון חוזר</button>
     `, true);
+    on('refundFixPrice', 'click', () => editProduct(missingProduct.id, () => openIcountRefundPreview(returnId)));
+    on('refundPreviewRetry', 'click', () => openIcountRefundPreview(returnId));
     return;
   }
 
@@ -5443,7 +5454,7 @@ async function openIcountRefundPreview(returnId) {
       const { data, error } = await sb.functions.invoke('icount-invoice', {
         body: { action: 'refund_create', return_id: returnId },
       });
-      if (error) throw error;
+      if (error) throw await edgeFunctionError(error);
       if (!data?.ok) throw new Error(data?.error || 'הפקת חשבונית הזיכוי נכשלה');
       const { error: creditError } = await sb.rpc('credit_return', { p_return_id: returnId });
       if (creditError) throw new Error(`המסמך הופק, אך סימון החזרה כזוכתה נכשל: ${friendlyError(creditError)}`);
@@ -5627,7 +5638,7 @@ async function createFlexibleInvoice() {
     const { data, error } = await sb.functions.invoke('icount-invoice', {
       body: { action: 'flexible_create', ...flexibleInvoicePreviewPayload },
     });
-    if (error) throw error;
+    if (error) throw await edgeFunctionError(error);
     if (!data?.ok) throw new Error(data?.error || 'הפקת החשבונית נכשלה');
     toast(`חשבונית ${data.invoice_number || ''} הופקה ונשמרה בכרטיס הלקוח`);
     closeModal();
