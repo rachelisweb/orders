@@ -172,7 +172,7 @@ function view(id, title, sub) {
 
 function nav(key) {
   $$('.bn-item').forEach((b) => b.classList.toggle('active', b.dataset.nav === key));
-  if (key === 'catalog') view('catalogView', '🛍️ רחליס', 'הזמנה חדשה');
+  if (key === 'catalog') view('catalogView', 'רחליס', 'הזמנה חדשה');
   else if (key === 'orders') {
     view('ordersView', '📋 האזור האישי', '');
     fillAccountProfile();
