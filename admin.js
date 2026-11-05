@@ -4068,7 +4068,7 @@ function newReturn() {
     <h4 class="bold" style="margin:.4rem 0 .5rem">דגמים שהוחזרו</h4>
     <div class="note small">
       לכל דגם אפשר למלא כמויות בכל המידות. חלונית שמסומנת <b>פגום</b>
-      תישמר בנפרד ולא תיכנס למלאי.
+      תישמר בנפרד ולא תיכנס למלאי. אפשר להוסיף את אותו דגם שוב כדי להפריד בין פריטים תקינים לפגומים.
     </div>
     <div class="return-model-picker">
       <input type="text" id="rtAddModel" list="rtModels" autocomplete="off" placeholder="הקלדת מספר דגם…">
@@ -4117,9 +4117,7 @@ function newReturn() {
 function addRetLine(rawModel = '') {
   const product = db.products.find((item) => item.model.toLowerCase() === rawModel.trim().toLowerCase());
   if (!product) { toast('יש לבחור דגם קיים מהרשימה', true); return; }
-  const existing = retLines.find((line) => line.model === product.model && !line.defective);
-  if (existing) { toast(`דגם ${product.model} כבר נמצא בחזרה`); return; }
-  retLines.push({
+  retLines.unshift({
     key: ++retSeq, model: product.model, sizes: {},
     defective: false, photo: null, previewUrl: null, notes: '',
   });
